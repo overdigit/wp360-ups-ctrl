@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+gpiomon -n 1 -f gpiochip0 22 | grep -q 'event: FALLING EDGE' && shutdown now
+exit 1
+

@@ -1,0 +1,18 @@
+#!/bin/sh
+PREREQ=""
+prereqs()
+{
+  echo "$PREREQ"
+}
+case $1 in
+prereqs)
+  prereqs
+  exit 0
+;;
+esac
+
+. /scripts/functions
+# Begin real processing below this line
+gpioset --bias=pull-down --drive=push-pull gpiochip0 24=1
+sleep 0.005s
+gpioset --bias=pull-down --drive=push-pull gpiochip0 24=0
