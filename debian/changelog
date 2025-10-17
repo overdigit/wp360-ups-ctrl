@@ -1,3 +1,9 @@
+wp360-ups-ctrl (1.0.0-2) bookworm trixie; urgency=low
+
+  * Release for Trixie.
+
+ -- Overdigit <info@overdigit.com>  Fri, 17 Oct 2025 18:53:44 +0200
+
 wp360-ups-ctrl (1.0.0-1) bookworm; urgency=low
 
   * Initial release.
