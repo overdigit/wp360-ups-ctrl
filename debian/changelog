@@ -1,3 +1,9 @@
+wp360-ups-ctrl (1.1.0-1) trixie; urgency=low
+
+  * Update to new gpiod syntax.
+
+ -- Overdigit <info@overdigit.com>  Mon, 20 Oct 2025 17:10:09 +0200
+
 wp360-ups-ctrl (1.0.0-2) bookworm trixie; urgency=low
 
   * Release for Trixie.
