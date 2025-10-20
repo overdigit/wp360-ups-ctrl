@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-gpiomon -n 1 -f -c 0 22 | grep -q 'event: FALLING EDGE' && shutdown now
+gpiomon -n 1 -e falling -c 0 22 && shutdown now
 exit 1
 
