@@ -13,6 +13,4 @@ esac
 
 . /scripts/functions
 # Begin real processing below this line
-gpioset --bias=pull-down --drive=push-pull gpiochip0 24=1
-sleep 0.005s
-gpioset --bias=pull-down --drive=push-pull gpiochip0 24=0
+gpioset --bias=pull-down --drive=push-pull -c 0 -t 5,0 24=1
