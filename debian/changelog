@@ -1,3 +1,9 @@
+wp360-ups-ctrl (1.1.1-1) trixie; urgency=low
+
+  * Fix gpioset hanging instead of exiting preventing codesys from starting.
+
+ -- Overdigit <info@overdigit.com>  Mon, 03 Nov 2025 20:07:21 +0100
+
 wp360-ups-ctrl (1.1.0-1) trixie; urgency=low
 
   * Update to new gpiod syntax.
