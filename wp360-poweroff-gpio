@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+gpioset -c 0 -t 2s 23=1

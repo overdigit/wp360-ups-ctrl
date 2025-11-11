@@ -1,3 +1,9 @@
+wp360-ups-ctrl (1.2.0-1) trixie; urgency=low
+
+  * Manually set poweroff pin.
+
+ -- Overdigit <info@overdigit.com>  Tue, 11 Nov 2025 16:05:28 +0100
+
 wp360-ups-ctrl (1.1.1-1) trixie; urgency=low
 
   * Fix gpioset hanging instead of exiting preventing codesys from starting.
