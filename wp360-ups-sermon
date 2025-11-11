@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+while read evtime state
+do
+  evtime="${evtime//.}"
+  case "$state" in
+    1) # rising, end of bit
+      dt=$(( (evtime - lastTime + 500000) / 1000000 )) # low pulse length, round to nearest ms
+      case "$dt" in
+        3) # 2.5 to 3.5 ms, sync bit
+          bits=0
+          cmd=""
+          value=""
+          ;;
+        1) # 0.5 to 1.5 ms, low bit
+          if ((bits++<8))
+          then
+            cmd="${cmd}0"
+          elif ((bits<=16))
+          then
+            value="${value}0"
+          fi
+          ;;
+        2) # 1.5 to 2.5 ms, high bit
+          if ((bits++<8))
+          then
+            cmd="${cmd}1"
+          elif ((bits<=16))
+          then
+            value="${value}1"
+          fi
+          ;;
+        *) # invalid bit, will wait for a new sync
+          bits=17
+          ;;
+      esac
+      if ((bits==16))
+      then
+        # echo $cmd $value
+        printf "Command: 0x%X 0x%X\n" "$((2#$cmd))" "$((2#$value))"
+        # :
+      fi
+      ;;
+    2) # falling, start of bit
+      lastTime="$evtime"
+      ;;
+  esac
+done < <(gpiomon -c 0 -F "%S %e" -E realtime 6)
