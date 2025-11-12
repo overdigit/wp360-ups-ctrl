@@ -1,31 +1,24 @@
 #!/usr/bin/env bash
 
- HIGH="1900us"
-  LOW="900us"
- SYNC="2900us"
-PAUSE="900us"
+ HIGH="1995us"
+  LOW="995us"
+ SYNC="2995us"
+PAUSE="995us"
   END="0"
 
-byte1=$(echo "ibase=16;obase=2;${1^^}" | bc)
-byte2=$(echo "ibase=16;obase=2;${2^^}" | bc)
+((payload = ((16#"$1") << 8) + (16#"$2") ))
 
-payload=$(printf "%08d%08d" "$byte1" "$byte2")
+bits=16
 
 timestr="$SYNC,$PAUSE"
 
-while read bit
+while ((bits-- > 0))
 do
-  case "$bit" in
-    1)
-      downtime="$HIGH"
-      ;;
-    0)
-      downtime="$LOW"
-      ;;
-  esac
+  ((payload & 16#8000)) && downtime="$HIGH" || downtime="$LOW"
+  ((payload = payload << 1))
   timestr="$timestr,$downtime,$PAUSE"
-done < <(grep -o . <<< "$payload")
+done
 
 timestr="${timestr%,*},$END"
 #printf "%08d %08d\n" "$byte1" "$byte2"
-gpioset -c 0 -t "$timestr" 10=0
+chrt 11 gpioset -c 0 -t "$timestr" 24=0

@@ -1,33 +1,95 @@
 #!/usr/bin/env bash
+
+(( MSG_NONE                  = 16#0000 ))
+(( MSG_SYS_POWEROFF          = 16#0200 ))
+(( MSG_BOOTUP                = 16#0400 ))
+(( MSG_SHUTDOWN_GUARD        = 16#0600 ))
+(( MSG_POWER_STATE           = 16#0800 ))
+(( MSG_POWER_VOLTAGE_VALUE   = 16#0A00 ))
+(( MSG_BATTERY_VOLTAGE_VALUE = 16#0C00 ))
+
+(( MSG_POWER_VOLTAGE_NOMINAL = 16#1000 ))
+(( MSG_POWER_VOLTAGE_MIN     = 16#1200 ))
+(( MSG_CAPACITOR_VOLTAGE_MIN = 16#1400 ))
+(( MSG_SWITCHING_VOLTAGE_MIN = 16#1600 ))
+(( MSG_BATTERY_VOLTAGE_MIN   = 16#1800 ))
+(( MSG_BATTERY_VERSION       = 16#1A00 ))
+(( MSG_PORT_POWEROFF         = 16#1C00 ))
+(( MSG_SWITCHING_TIMEOUT     = 16#1E00 ))
+
+(( MSG_CMD_MASK              = 16#3E00 ))
+(( MSG_DATA_MASK             = 16#01FF ))
+(( MSG_WRITE_MASK            = 16#8000 ))
+
+STATE_DIR=/run/wp360-ups-ctrl
+
+mkdir -p "${STATE_DIR}"
+
+interface_write()
+{
+  echo "$2" > "${STATE_DIR}/$1"
+}
+
+parse_command()
+{
+  local  cmd=$(( $1 & MSG_CMD_MASK  ))
+  local data=$(( $1 & MSG_DATA_MASK ))
+  case "$cmd" in
+    "$MSG_POWER_STATE")
+      interface_write PowerState "$data"
+      ;;
+    "$MSG_POWER_VOLTAGE_VALUE")
+      interface_write PowerVoltageValue "$data"
+      ;;
+    "$MSG_BATTERY_VOLTAGE_VALUE")
+      interface_write BatteryVoltageValue "$data"
+      ;;
+    "$MSG_POWER_VOLTAGE_NOMINAL")
+      interface_write PowerVoltageNominal "$data"
+      ;;
+    "$MSG_POWER_VOLTAGE_MIN")
+      interface_write PowerVoltageMin "$data"
+      ;;
+    "$MSG_CAPACITOR_VOLTAGE_MIN")
+      interface_write CapacitorVoltageMin "$data"
+      ;;
+   "$MSG_SWITCHIMG_VOLTAGE_MIN")
+      interface_write SwitchingVoltageMin "$data"
+      ;;
+   "$MSG_BATTERY_VOLTAGE_MIN")
+      interface_write BatteryVoltageMin "$data"
+      ;;
+    "$MSG_BATTERY_VERSION")
+      interface_write BatteryVersion "$data"
+      ;;
+    "$MSG_PORT_POWEROFF")
+      interface_write PortPoweroff "$data"
+      ;;
+    "$MSG_SWITCHING_TIMEOUT")
+      interface_write SwitchingTimeout "$data"
+      ;;
+  esac
+}
+
 while read evtime state
 do
   evtime="${evtime//.}"
   case "$state" in
     1) # rising, end of bit
       dt=$(( (evtime - lastTime + 500000) / 1000000 )) # low pulse length, round to nearest ms
+      echo "Received pulse: $dt"
       case "$dt" in
         3) # 2.5 to 3.5 ms, sync bit
           bits=0
-          cmd=""
-          value=""
+          word=0
           ;;
         1) # 0.5 to 1.5 ms, low bit
-          if ((bits++<8))
-          then
-            cmd="${cmd}0"
-          elif ((bits<=16))
-          then
-            value="${value}0"
-          fi
-          ;;
+          (( word = word << 1 ))
+          (( bits++ ))
+	  ;;
         2) # 1.5 to 2.5 ms, high bit
-          if ((bits++<8))
-          then
-            cmd="${cmd}1"
-          elif ((bits<=16))
-          then
-            value="${value}1"
-          fi
+          (( word = (word << 1) + 1 ))
+          (( bits++ ))
           ;;
         *) # invalid bit, will wait for a new sync
           bits=17
@@ -35,8 +97,8 @@ do
       esac
       if ((bits==16))
       then
-        # echo $cmd $value
-        printf "Command: 0x%X 0x%X\n" "$((2#$cmd))" "$((2#$value))"
+        parse_command "$word"
+        printf "Command: 0x%X 0x%X 0x%X\n" "$word" "$(( word & MSG_CMD_MASK ))" "$(( word & MSG_DATA_MASK ))"
         # :
       fi
       ;;
@@ -44,4 +106,4 @@ do
       lastTime="$evtime"
       ;;
   esac
-done < <(gpiomon -c 0 -F "%S %e" -E realtime 6)
+done < <(chrt 11 gpiomon -c 0 -F "%S %e" -E realtime 23)
