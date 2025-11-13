@@ -6,19 +6,31 @@
 PAUSE="995us"
   END="0"
 
-((payload = ((16#"$1") << 8) + (16#"$2") ))
+ MASK="16#80000000"
 
-bits=16
+if (( $# != 2 ))
+then
+  echo -e "Usage: $0 <payload> <size>\nPayload is HEX, size is in bytes; leading zeros are assumed when payload is shorter than size" >&2
+  exit 1
+fi
+
+((
+  payload = 16#"$1",
+  bits    = $2 * 8
+))
+
+MASK=${MASK:0:$(( 3 + 2 * $2 ))}
 
 timestr="$SYNC,$PAUSE"
 
 while ((bits-- > 0))
 do
-  ((payload & 16#8000)) && downtime="$HIGH" || downtime="$LOW"
+  ((payload & MASK)) && downtime="$HIGH" || downtime="$LOW"
   ((payload = payload << 1))
   timestr="$timestr,$downtime,$PAUSE"
 done
 
 timestr="${timestr%,*},$END"
+
 #printf "%08d %08d\n" "$byte1" "$byte2"
 chrt 11 gpioset -c 0 -t "$timestr" 24=0

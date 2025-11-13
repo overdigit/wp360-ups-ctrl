@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 
-(( MSG_NONE                  = 16#0000 ))
-(( MSG_SYS_POWEROFF          = 16#0200 ))
-(( MSG_BOOTUP                = 16#0400 ))
-(( MSG_SHUTDOWN_GUARD        = 16#0600 ))
-(( MSG_POWER_STATE           = 16#0800 ))
-(( MSG_POWER_VOLTAGE_VALUE   = 16#0A00 ))
-(( MSG_BATTERY_VOLTAGE_VALUE = 16#0C00 ))
+((
+  MSG_NONE                  = 16#00,
+  MSG_SYS_POWEROFF          = 16#02,
+  MSG_BOOTUP                = 16#04,
+  MSG_SHUTDOWN_GUARD        = 16#06,
+  MSG_POWER_STATE           = 16#08,
+  MSG_POWER_VOLTAGE_VALUE   = 16#0A,
+  MSG_BATTERY_VOLTAGE_VALUE = 16#0C,
 
-(( MSG_POWER_VOLTAGE_NOMINAL = 16#1000 ))
-(( MSG_POWER_VOLTAGE_MIN     = 16#1200 ))
-(( MSG_CAPACITOR_VOLTAGE_MIN = 16#1400 ))
-(( MSG_SWITCHING_VOLTAGE_MIN = 16#1600 ))
-(( MSG_BATTERY_VOLTAGE_MIN   = 16#1800 ))
-(( MSG_BATTERY_VERSION       = 16#1A00 ))
-(( MSG_PORT_POWEROFF         = 16#1C00 ))
-(( MSG_SWITCHING_TIMEOUT     = 16#1E00 ))
+  MSG_POWER_VOLTAGE_NOMINAL = 16#10,
+  MSG_POWER_VOLTAGE_MIN     = 16#12,
+  MSG_CAPACITOR_VOLTAGE_MIN = 16#14,
+  MSG_SWITCHING_VOLTAGE_MIN = 16#16,
+  MSG_BATTERY_VOLTAGE_MIN   = 16#18,
+  MSG_BATTERY_VERSION       = 16#1A,
+  MSG_PORT_POWEROFF         = 16#1C,
+  MSG_SWITCHING_TIMEOUT     = 16#1E,
 
-(( MSG_CMD_MASK              = 16#3E00 ))
-(( MSG_DATA_MASK             = 16#01FF ))
-(( MSG_WRITE_MASK            = 16#8000 ))
+  MSG_CMD_MASK              = 16#3E000000,
+  MSG_DATA_MASK             = 16#01FFFFFF,
+  MSG_WRITE_MASK            = 16#80000000
+))
 
 STATE_DIR=/run/wp360-ups-ctrl
 
@@ -32,8 +34,9 @@ interface_write()
 
 parse_command()
 {
-  local  cmd=$(( $1 & MSG_CMD_MASK  ))
-  local data=$(( $1 & MSG_DATA_MASK ))
+  local  cmd=$(( ($1 & MSG_CMD_MASK)  >> $2 ))
+  local data=$(( ($1 & MSG_DATA_MASK) >> $2 ))
+ 
   case "$cmd" in
     "$MSG_POWER_STATE")
       interface_write PowerState "$data"
@@ -76,29 +79,51 @@ do
   evtime="${evtime//.}"
   case "$state" in
     1) # rising, end of bit
-      dt=$(( (evtime - lastTime + 500000) / 1000000 )) # low pulse length, round to nearest ms
-      echo "Received pulse: $dt"
-      case "$dt" in
-        3) # 2.5 to 3.5 ms, sync bit
-          bits=0
-          word=0
-          ;;
-        1) # 0.5 to 1.5 ms, low bit
-          (( word = word << 1 ))
-          (( bits++ ))
-	  ;;
-        2) # 1.5 to 2.5 ms, high bit
-          (( word = (word << 1) + 1 ))
-          (( bits++ ))
-          ;;
-        *) # invalid bit, will wait for a new sync
-          bits=17
-          ;;
-      esac
-      if ((bits==16))
+      dt=$(( (evtime - lastTime + 500000) / 100000 )) # low pulse length, round to nearest decimillisec
+      if (( dt >= 7 && dt <= 13 && bits > 0 ))
       then
-        parse_command "$word"
-        printf "Command: 0x%X 0x%X 0x%X\n" "$word" "$(( word & MSG_CMD_MASK ))" "$(( word & MSG_DATA_MASK ))"
+        ((
+        payload = payload << 1,
+        bits--
+        ))
+      elif (( dt >= 17 && dt <= 13 && bits > 0 ))
+      then
+        ((
+        payload = (payload << 1) + 1,
+        bits--
+        ))
+      elif (( dt >= 27 && dt <= 33 ))
+      then
+        ((
+        payload = 0,
+        bits = 8,
+        shift = 1
+        ))
+      elif (( dt >= 37 && dt <= 43 ))
+      then
+        ((
+        payload = 0,
+        bits = 16,
+        shift = 16
+        ))
+      elif (( dt >= 47 && dt <= 53 ))
+      then
+        ((
+        payload = 0,
+        bits = 32,
+        shift = 0
+        ))
+      else
+        ((
+        bits = -1
+        ))
+      fi
+
+      if (( bits == 0 ))
+      then
+        (( payload = payload << shift ))
+        parse_command "$payload" "$shift"
+        printf "Command: 0x%X\n" "$payload"
         # :
       fi
       ;;
