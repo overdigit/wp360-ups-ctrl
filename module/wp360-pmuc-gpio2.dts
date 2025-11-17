@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2711";
+    fragment@0 {
+        target-path = "/";
+        __overlay__ {
+            wp360-pmuc {
+                compatible = "overdigit,wp360-pmuc";
+                comm-gpios = <&gpio 6 1>, <&gpio 10 1>;
+            };
+        };
+    };
+};

@@ -13,7 +13,14 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
+#include <linux/syscalls.h>
+#include <linux/time.h>
 #include <asm/errno.h>
+#include <linux/platform_device.h>
+#include <linux/kthread.h>
+#include <linux/sched.h>
+#include <linux/mutex.h>
+#include <linux/atomic.h>
 
 #include "wp360-pmuc-driver.h"
 
@@ -36,9 +43,6 @@ static struct wp360_pmuc_sysfs_attribute attributes[] = {
 
 static struct attribute *wp360_pmuc_attrs[N_ATTRIBUTES + 1];
 ATTRIBUTE_GROUPS(wp360_pmuc);
-/*static struct attribute_group attribute_grp = {
-	.attrs = sysfs_attributes,
-};*/
 
 static const struct kobj_type wp360_pmuc_ktype = {
 	.sysfs_ops = &kobj_sysfs_ops,
@@ -74,24 +78,161 @@ static struct file_operations chardev_fops = {
 	.release = device_release,
 };
 
-static atomic_t already_open = ATOMIC_INIT(CDEV_NOT_USED);
+DEFINE_MUTEX(chardev_write);
 
-static char msg[BUF_LEN + 1];
+static char msg[BUF_LEN + 1] = "Hi, this is a weird message\n";
 
-// Kernel module parameters
-static int gpio_read_pin  = 23;
-static int gpio_write_pin = 24;
+// GPIO and device tree
+static struct gpio_desc *gpio_send, *gpio_recv;
 
-module_param(gpio_read_pin, int, 0000);
-MODULE_PARM_DESC(gpio_read_pin, "The pin the PMUC send line is wired to");
+// threads and mutex and stuff
+static struct task_struct *wp360_pmuc_write_task;
 
-module_param(gpio_write_pin, int, 0000);
-MODULE_PARM_DESC(gpio_write_pin, "The pin the PMUC receive line is wired to");
+static DECLARE_WAIT_QUEUE_HEAD(waitq);
+static atomic_t buffer_op = ATOMIC_INIT(0);
+static struct wp360_pmuc_message messages[BUF_LEN];
+static struct wp360_pmuc_message_buffer buffer = {0, 0, BUF_LEN, messages};
+
+static int wp360_pmuc_write_thread(void *arg)
+{
+	pr_info("KThread started\n");
+	sched_set_fifo(current);
+	pr_info("Scheduler set\n");
+	//TODO: proper thread termination, proper signal handling
+	while (1)
+	{
+		pr_info("Looping around...\n");
+		if (!atomic_cmpxchg(&buffer_op, 0, 1))
+		{
+			pr_info("We're in\n");
+			// we're in
+			while (buffer.push_head != buffer.pop_head)
+			{
+				pr_info("Popping a message...\n");
+				u64 delay  = 0;
+				u64 target = 0;
+				u64 time   = 0;
+				struct wp360_pmuc_message msg = buffer.buffer[buffer.pop_head];
+				switch(msg.size)
+				{
+				case (1):
+					pr_info("Sending 0x%02X\n", msg.payload[0]);
+					delay = SYNC_BYTE;
+					break;
+				case (2):
+					pr_info("Sending 0x%02X%02X\n", msg.payload[0], msg.payload[1]);
+					delay = SYNC_WORD;
+					break;
+				case (4):
+					pr_info("Sending 0x%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3]);
+					delay = SYNC_DWORD;
+					break;
+				}
+				// TODO: gracefully handle wrong size
+				gpiod_set_value(gpio_send, 1);
+				target = ktime_get_ns() + delay * 1000;
+				usleep_range(delay - MSG_DELAY_DELTA, delay - MSG_DELAY_DELTA);
+				time = ktime_get_ns();
+				if (time < target)
+					ndelay(target - time);
+				gpiod_set_value(gpio_send, 0);
+				target += PAUSE * 1000;
+				usleep_range(PAUSE - MSG_DELAY_DELTA, PAUSE - MSG_DELAY_DELTA);
+				time = ktime_get_ns();
+				if (time < target)
+					ndelay(target - time);
+				for (int bit = 0; bit < msg.size * 8; bit++)
+				{
+					gpiod_set_value(gpio_send, 1);
+					delay = ((msg.payload[bit >> 3] << (bit & 0x7)) & 0x80) ? PULSE_LENGTH_HIGH : PULSE_LENGTH_LOW;
+					target += delay * 1000;
+					usleep_range(delay - MSG_DELAY_DELTA, delay - MSG_DELAY_DELTA);
+					time = ktime_get_ns();
+					if (time < target)
+						ndelay(target - time);
+					gpiod_set_value(gpio_send, 0);
+					target += PAUSE * 1000;
+					usleep_range(PAUSE - MSG_DELAY_DELTA, PAUSE - MSG_DELAY_DELTA);
+					time = ktime_get_ns();
+					if (time < target)
+						ndelay(target - time);
+				}
+				usleep_range(MSG_END_MIN, MSG_END_MAX);
+				if (++buffer.pop_head == buffer.buffer_size)
+				{
+					buffer.pop_head = 0;
+				}
+			}
+			pr_info("We're out\n");
+			atomic_set(&buffer_op, 0);
+		}
+		pr_info("Waking others up\n");
+		wake_up(&waitq);
+		pr_info("And now going to sleep myself\n");
+		wait_event_interruptible(waitq, (pr_info("Test\n"), (!atomic_read(&buffer_op) && (buffer.push_head != buffer.pop_head))));
+	}
+	return 0;
+}
+
+static int devicemodel_probe(struct platform_device *dev)
+{
+	pr_info("devicemodel probe\n");
+	gpio_send = gpiod_get_index(&dev->dev, "comm", 0, GPIOD_OUT_LOW);
+	gpio_recv = gpiod_get_index(&dev->dev, "comm", 1, GPIOD_IN);
+	if (IS_ERR(gpio_send))
+	{
+		pr_err("GPIO send request failed: %ld\n", PTR_ERR(gpio_send));
+		return PTR_ERR(gpio_send);
+	}
+	if (IS_ERR(gpio_recv))
+	{
+		pr_err("GPIO recv request failed: %ld\n", PTR_ERR(gpio_recv));
+		return PTR_ERR(gpio_recv);
+	}
+	return 0;
+}
+
+static DEVICEMODEL_REMOVE_RETURN_TYPE devicemodel_remove(struct platform_device *dev)
+{
+	gpiod_put(gpio_send);
+	gpiod_put(gpio_recv);
+	DEVICEMODEL_REMOVE_RETURN
+}
+
+static int devicemodel_suspend(struct device *dev)
+{
+	return 0;
+}
+static int devicemodel_resume (struct device *dev)
+{
+	return 0;
+}
+
+static const struct dev_pm_ops devicemodel_pm_ops = {
+	.suspend = devicemodel_suspend,
+	.resume = devicemodel_resume,
+
+	.poweroff = devicemodel_suspend,
+	.freeze = devicemodel_suspend,
+
+	.thaw = devicemodel_resume,
+	.restore = devicemodel_resume,
+};
+
+static struct platform_driver devicemodel_driver = {
+	.driver = {
+		.name = "wp360-pmuc",
+		.pm   = &devicemodel_pm_ops,
+	},
+	.probe = devicemodel_probe,
+	.remove = devicemodel_remove,
+};
 
 
 static int __init wp360_pmuc_driver_init(void)
 {
 	int retval;
+	
 	major = register_chrdev(0, DEVICE_NAME, &chardev_fops);
 	if (major < 0)
 	{
@@ -117,6 +258,22 @@ static int __init wp360_pmuc_driver_init(void)
 	if (retval)
 		return -ENOMEM;
 
+	retval = platform_driver_register(&devicemodel_driver);
+	if (retval)
+	{
+		pr_err("Unable to register driver\n");
+		return retval;
+	}
+
+	wp360_pmuc_write_task = kthread_create(wp360_pmuc_write_thread, NULL, "KThread wp360 pmuc send");
+	if (IS_ERR(wp360_pmuc_write_task))
+	{
+		pr_err("Could not create thread\n");
+		return -1;
+	}
+	pr_info("Woken up? %d\n", wake_up_process(wp360_pmuc_write_task));
+
+	pr_info("Driver loaded\n");
 	return 0;
 }
 
@@ -126,11 +283,15 @@ static void __exit wp360_pmuc_driver_exit(void)
 	class_destroy(cls);
 	unregister_chrdev(major, DEVICE_NAME);
 	kobject_put(&mymodule);
+	platform_driver_unregister(&devicemodel_driver);
+	pr_info("Driver unloaded\n");
 }
 
 static int device_open(struct inode *inode, struct file *file)
 {
-  // Device was opened, I might want to keep track of this?
+	// Device was opened, I might want to keep track of this?
+	// Definitely gonna have to keep track of this
+
 	return 0;
 }
 
@@ -171,9 +332,58 @@ static ssize_t device_read(struct file *filp, char __user *buffer, size_t length
 
 static ssize_t device_write(struct file *filp, const char __user *buff, size_t len, loff_t *off)
 {
+	if (*off)
+	{
+		pr_info("Invalid offset - this should not be possible\n");
+		return -EINVAL; // TODO: proper error value invalid seek I think?
+	}
+	
+	switch(len)
+	{
+		case (1):
+		case (2):
+		case (4):
+			break;
+		default:
+			pr_info("Invalid number of bytes: %lu\n", len);
+			return -EINVAL;
+			break;
+	}
+
+	if (!access_ok(buff, len))
+	{
+		pr_info("Couldn't move buffer in kernelspace\n");
+		return -EINVAL;
+	}
+
+	pr_info("Trying to add to buffer...\n");
+	if (atomic_cmpxchg(&buffer_op, 0, 1))
+	{
+		pr_info("Something's going on, I'll wait a bit\n");
+		wait_event_interruptible(waitq, !atomic_cmpxchg(&buffer_op, 0, 1));
+	}
+	
+	if (__copy_from_user(buffer.buffer[buffer.push_head].payload, buff, len))
+	{
+		pr_err("Could not copy memory from user!\n");
+		atomic_set(&buffer_op, 0);
+		return -EINVAL;
+	}
+	buffer.buffer[buffer.push_head].size = len;
+
+	if (++buffer.push_head == buffer.buffer_size)
+	{
+		pr_info("Buffer wraparound\n");
+		buffer.push_head = 0;
+	}
+
+	atomic_set(&buffer_op, 0);
+
+	wake_up(&waitq);
+
 	// Read bytes, add them to send buffer
 	// Return actual number of written bytes
-	return -EINVAL;
+	return len;
 }
 
 module_init(wp360_pmuc_driver_init);
