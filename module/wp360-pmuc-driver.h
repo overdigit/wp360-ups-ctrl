@@ -2,7 +2,7 @@
 #define DEVICEMODEL_REMOVE_RETURN_TYPE void
 #define DEVICEMODEL_REMOVE_RETURN
 #else
-#define DEVICEMODEL_REMOVE_RETURN_TYPE int;
+#define DEVICEMODEL_REMOVE_RETURN_TYPE int
 #define DEVICEMODEL_REMOVE_RETURN      return 0;
 #endif
 
@@ -11,7 +11,7 @@
 
 #define SYNC_BYTE         2000
 #define SYNC_WORD         3000
-#define SYNC_DWORD        4000
+#define SYNC_DWORD        5000
 #define PAUSE             500
 #define PULSE_LENGTH_HIGH 1000
 #define PULSE_LENGTH_LOW  500
@@ -43,21 +43,32 @@ struct wp360_pmuc_sysfs_attribute {
 };
 
 static int  devicemodel_probe  (struct platform_device *);
-static DEVICEMODEL_REMOVE_RETURN_TYPE
-            devicemodel_remove (struct platform_device *);
+static DEVICEMODEL_REMOVE_RETURN_TYPE devicemodel_remove (struct platform_device *);
 static int  devicemodel_suspend(struct device *);
 static int  devicemodel_resume (struct device *);
 
-static int  wp360_pmuc_write_thread(void *arg);
+static int  wp360_pmuc_write_thread(void *);
+static int  wp360_pmuc_read_thread (void *);
+
+static irqreturn_t wp360_pmuc_interrupt       (int, void *);
+static irqreturn_t wp360_pmuc_interrupt_thread(int, void *);
 
 struct wp360_pmuc_message {
 	char size;
 	char payload[4];
 };
 
+struct wp360_pmuc_message_recv {
+	struct wp360_pmuc_message msg;
+	char bit;
+	u64  fall_time;
+};
+
 struct wp360_pmuc_message_buffer {
-	size_t push_head;
-	size_t pop_head;
-	size_t buffer_size;
+	size_t                     push_head;
+	size_t                     pop_head;
+	size_t                     size;
 	struct wp360_pmuc_message *buffer;
+	atomic_t                   write_lock;
+	wait_queue_head_t          waitq;
 };

@@ -21,6 +21,7 @@
 #include <linux/sched.h>
 #include <linux/mutex.h>
 #include <linux/atomic.h>
+#include <linux/interrupt.h>
 
 #include "wp360-pmuc-driver.h"
 
@@ -88,43 +89,60 @@ static struct gpio_desc *gpio_send, *gpio_recv;
 // threads and mutex and stuff
 static struct task_struct *wp360_pmuc_write_task;
 
-static DECLARE_WAIT_QUEUE_HEAD(waitq);
-static atomic_t buffer_op = ATOMIC_INIT(0);
-static struct wp360_pmuc_message messages[BUF_LEN];
-static struct wp360_pmuc_message_buffer buffer = {0, 0, BUF_LEN, messages};
+static struct wp360_pmuc_message _w_messages[BUF_LEN];
+static struct wp360_pmuc_message_buffer write_buffer = {
+	.push_head  = 0,
+	.pop_head   = 0,
+	.size       = BUF_LEN,
+	.buffer     = _w_messages,
+	.write_lock = ATOMIC_INIT(0)
+};
+
+static struct wp360_pmuc_message _r_messages[BUF_LEN];
+static struct wp360_pmuc_message_buffer read_buffer  = {
+	.push_head  = 0,
+	.pop_head   = 0,
+	.size       = BUF_LEN,
+	.buffer     = _r_messages,
+	.write_lock = ATOMIC_INIT(0)
+};
+static struct wp360_pmuc_message_recv recv_msg;
+
+static int irq;
 
 static int wp360_pmuc_write_thread(void *arg)
 {
-	pr_info("KThread started\n");
+	pr_info("[w] KThread started\n");
 	sched_set_fifo(current);
-	pr_info("Scheduler set\n");
+	pr_info("[w] Scheduler set\n");
 	//TODO: proper thread termination, proper signal handling
+	//TODO: turn push_head into atomic, don't wait on write_buffer.write_lock
 	while (1)
 	{
-		pr_info("Looping around...\n");
-		if (!atomic_cmpxchg(&buffer_op, 0, 1))
+		pr_info("[w] Looping around...\n");
+		if (!atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
 		{
-			pr_info("We're in\n");
+			pr_info("[w] We're in\n");
 			// we're in
-			while (buffer.push_head != buffer.pop_head)
+			while (write_buffer.push_head != write_buffer.pop_head)
 			{
-				pr_info("Popping a message...\n");
+				pr_info("[w] Popping a message...\n");
 				u64 delay  = 0;
 				u64 target = 0;
 				u64 time   = 0;
-				struct wp360_pmuc_message msg = buffer.buffer[buffer.pop_head];
+				struct wp360_pmuc_message msg = write_buffer.buffer[write_buffer.pop_head];
 				switch(msg.size)
 				{
 				case (1):
-					pr_info("Sending 0x%02X\n", msg.payload[0]);
+					pr_info("[w] Sending 0x%02X\n", msg.payload[0]);
 					delay = SYNC_BYTE;
 					break;
 				case (2):
-					pr_info("Sending 0x%02X%02X\n", msg.payload[0], msg.payload[1]);
+					pr_info("[w] Sending 0x%02X%02X\n", msg.payload[0], msg.payload[1]);
 					delay = SYNC_WORD;
 					break;
 				case (4):
-					pr_info("Sending 0x%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3]);
+					pr_info("[w] Sending 0x%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3]);
 					delay = SYNC_DWORD;
 					break;
 				}
@@ -158,20 +176,125 @@ static int wp360_pmuc_write_thread(void *arg)
 						ndelay(target - time);
 				}
 				usleep_range(MSG_END_MIN, MSG_END_MAX);
-				if (++buffer.pop_head == buffer.buffer_size)
+				if (++write_buffer.pop_head == write_buffer.size)
 				{
-					buffer.pop_head = 0;
+					write_buffer.pop_head = 0;
 				}
 			}
-			pr_info("We're out\n");
-			atomic_set(&buffer_op, 0);
+			pr_info("[w] We're out\n");
+			atomic_set(&write_buffer.write_lock, 0);
 		}
-		pr_info("Waking others up\n");
-		wake_up(&waitq);
-		pr_info("And now going to sleep myself\n");
-		wait_event_interruptible(waitq, (pr_info("Test\n"), (!atomic_read(&buffer_op) && (buffer.push_head != buffer.pop_head))));
+		pr_info("[w] Waking others up\n");
+		wake_up(&write_buffer.waitq);
+		pr_info("[w] And now going to sleep myself\n");
+		wait_event_interruptible(write_buffer.waitq, (pr_info("[w] Wakeup test\n"), (!atomic_read(&write_buffer.write_lock) && (write_buffer.push_head != write_buffer.pop_head))));
+		// TODO: handle wait_event_interruptible signal
 	}
 	return 0;
+}
+
+static int wp360_pmuc_read_thread(void *arg)
+{
+	pr_info("[r] KThread started\n");
+	return 0;
+}
+
+static irqreturn_t wp360_pmuc_interrupt(int irq, void *dev_id)
+{
+	u64 time = ktime_get_ns();
+	int state = gpiod_get_value(gpio_recv);
+	switch (state)
+	{
+	case (1): // Line is active low
+		recv_msg.fall_time = time;
+		break;
+	case (0):
+		u64 dt = time - recv_msg.fall_time;
+		if (dt >= 300000 && dt <= 700000)
+		{ // Low bit
+			recv_msg.msg.payload[recv_msg.bit++ >> 3] <<= 1;
+		}
+		else if (dt >= 800000 && dt <= 1200000)
+		{ // High bit
+			recv_msg.msg.payload[recv_msg.bit >> 3] <<= 1;
+			recv_msg.msg.payload[recv_msg.bit >> 3] |=  1;
+			recv_msg.bit++;
+		}
+		else if (dt >= 1700000 && dt <= 2300000)
+		{ // Sync, byte incoming
+			recv_msg.msg.size = 1;
+			recv_msg.bit      = 0;
+		}
+		else if (dt >= 2700000 && dt <= 3300000)
+		{ // Sync, word incoming
+			recv_msg.msg.size = 2;
+			recv_msg.bit      = 0;
+		}
+		else if (dt >= 3700000 && dt <= 4300000)
+		{ // Sync, word+ incoming
+			recv_msg.msg.size = 3;
+			recv_msg.bit      = 0;
+		}
+		else if (dt >= 4700000 && dt <= 5300000)
+		{ // Sync, dword incoming
+			recv_msg.msg.size = 4;
+			recv_msg.bit      = 0;
+		}
+		else if (dt >= 5700000 && dt <= 6300000)
+		{ // Sync, dword+ incoming
+			recv_msg.msg.size = 5;
+			recv_msg.bit      = 0;
+		}
+		else
+		{ // Invalid signal, scrap everything
+			recv_msg.msg.size = 0;
+			recv_msg.bit      = 127;
+		}
+		if (recv_msg.bit < 127)
+		{
+			if (recv_msg.bit == (recv_msg.msg.size << 3))
+			{
+				read_buffer.buffer[read_buffer.push_head++] = recv_msg.msg;
+				read_buffer.push_head &= read_buffer.size - 1;
+				return IRQ_WAKE_THREAD;
+			}
+		}
+		break;
+	default:
+		pr_err("Invalid gpio_recv state %d\n", state);
+		return IRQ_NONE;
+		break;
+	}
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
+{
+	int push_head = read_buffer.push_head;
+	while (push_head != read_buffer.pop_head)
+	{
+		struct wp360_pmuc_message *msg = read_buffer.buffer + read_buffer.pop_head++;
+		switch(msg->size)
+		{
+		case (1):
+			pr_info("Ooh, received %d byte! 0x%02X\n", msg->size, msg->payload[0]);
+			break;
+		case (2):
+			pr_info("Ooh, received %d bytes! 0x%02X%02X\n", msg->size, msg->payload[0], msg->payload[1]);
+			break;
+		case (3):
+			pr_info("Ooh, received %d bytes! 0x%02X%02X%02X\n", msg->size, msg->payload[0], msg->payload[1], msg->payload[2]);
+			break;
+		case (4):
+			pr_info("Ooh, received %d bytes! 0x%02X%02X%02X%02X\n", msg->size, msg->payload[0], msg->payload[1], msg->payload[2], msg->payload[3]);
+			break;
+		case (5):
+			pr_info("Ooh, received %d bytes! 0x%02X%02X%02X%02X%02X\n", msg->size, msg->payload[0], msg->payload[1], msg->payload[2], msg->payload[3], msg->payload[4]);
+			break;
+		}
+		read_buffer.pop_head &= read_buffer.size - 1;
+	}
+	return IRQ_HANDLED;
 }
 
 static int devicemodel_probe(struct platform_device *dev)
@@ -189,6 +312,16 @@ static int devicemodel_probe(struct platform_device *dev)
 		pr_err("GPIO recv request failed: %ld\n", PTR_ERR(gpio_recv));
 		return PTR_ERR(gpio_recv);
 	}
+
+	irq = gpiod_to_irq(gpio_recv);
+	if (irq < 0)
+	{
+		pr_err("GPIO to IRQ failed");
+		return irq;
+	}
+
+	int ret = request_threaded_irq(irq, wp360_pmuc_interrupt, wp360_pmuc_interrupt_thread, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, DEVICE_NAME, (void *) dev);
+	
 	return 0;
 }
 
@@ -196,6 +329,7 @@ static DEVICEMODEL_REMOVE_RETURN_TYPE devicemodel_remove(struct platform_device 
 {
 	gpiod_put(gpio_send);
 	gpiod_put(gpio_recv);
+	free_irq(irq, (void *) dev);
 	DEVICEMODEL_REMOVE_RETURN
 }
 
@@ -248,6 +382,9 @@ static int __init wp360_pmuc_driver_init(void)
 	device_create(cls, NULL, MKDEV(major, 0), NULL, DEVICE_NAME);
 
 	pr_info("Device created on /dev/%s\n", DEVICE_NAME);
+	
+	init_waitqueue_head(&write_buffer.waitq);
+	init_waitqueue_head(&read_buffer.waitq);
 
 	for (int i = 0; i < N_ATTRIBUTES; i++)
 	{
@@ -291,6 +428,8 @@ static int device_open(struct inode *inode, struct file *file)
 {
 	// Device was opened, I might want to keep track of this?
 	// Definitely gonna have to keep track of this
+	// TODO: prohibit nonblocking read open because it makes zero sense
+	// TODO: 
 
 	return 0;
 }
@@ -357,29 +496,29 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 	}
 
 	pr_info("Trying to add to buffer...\n");
-	if (atomic_cmpxchg(&buffer_op, 0, 1))
+	if (atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
 	{
 		pr_info("Something's going on, I'll wait a bit\n");
-		wait_event_interruptible(waitq, !atomic_cmpxchg(&buffer_op, 0, 1));
+		wait_event_interruptible(write_buffer.waitq, !atomic_cmpxchg(&write_buffer.write_lock, 0, 1));
 	}
 	
-	if (__copy_from_user(buffer.buffer[buffer.push_head].payload, buff, len))
+	if (__copy_from_user(write_buffer.buffer[write_buffer.push_head].payload, buff, len))
 	{
 		pr_err("Could not copy memory from user!\n");
-		atomic_set(&buffer_op, 0);
+		atomic_set(&write_buffer.write_lock, 0);
 		return -EINVAL;
 	}
-	buffer.buffer[buffer.push_head].size = len;
+	write_buffer.buffer[write_buffer.push_head].size = len;
 
-	if (++buffer.push_head == buffer.buffer_size)
+	if (++write_buffer.push_head == write_buffer.size)
 	{
 		pr_info("Buffer wraparound\n");
-		buffer.push_head = 0;
+		write_buffer.push_head = 0;
 	}
 
-	atomic_set(&buffer_op, 0);
+	atomic_set(&write_buffer.write_lock, 0);
 
-	wake_up(&waitq);
+	wake_up(&write_buffer.waitq);
 
 	// Read bytes, add them to send buffer
 	// Return actual number of written bytes
