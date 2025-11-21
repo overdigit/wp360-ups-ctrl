@@ -25,21 +25,50 @@
 
 #include "wp360-pmuc-driver.h"
 
+// Send/receive buffers
+static struct wp360_pmuc_message _w_messages[BUF_LEN];
+static struct wp360_pmuc_message_buffer write_buffer = {
+	.push_head  = 0,
+	.pop_head   = 0,
+	.size       = BUF_LEN,
+	.buffer     = _w_messages,
+	.write_lock = ATOMIC_INIT(0)
+};
+
+static struct wp360_pmuc_message _r_messages[BUF_LEN];
+static struct wp360_pmuc_message_buffer read_buffer  = {
+	.push_head  = 0,
+	.pop_head   = 0,
+	.size       = BUF_LEN,
+	.buffer     = _r_messages,
+	.write_lock = ATOMIC_INIT(0)
+};
+static struct wp360_pmuc_message_recv recv_msg;
+
+
 // Sysfs interface
 static struct kobject mymodule;
 
 #define N_ATTRIBUTES (sizeof(attributes)/sizeof(struct wp360_pmuc_sysfs_attribute))
 static struct wp360_pmuc_sysfs_attribute attributes[] = {
-	{"power_voltage_nominal", 105, 300, __ATTR(power_voltage_nominal, 0664, sysfs_show, sysfs_store)},
-	{"power_voltage_min",     90,  300, __ATTR(power_voltage_min,     0664, sysfs_show, sysfs_store)},
-	{"capacitor_voltage_min", 52,  140, __ATTR(capacitor_voltage_min, 0664, sysfs_show, sysfs_store)},
-	{"switching_voltage_min", 50,  300, __ATTR(switching_voltage_min, 0664, sysfs_show, sysfs_store)},
-	{"battery_voltage_min",   50,  140, __ATTR(battery_voltage_min,   0664, sysfs_show, sysfs_store)},
-	{"battery_version",       0,     1, __ATTR(battery_version,       0664, sysfs_show, sysfs_store)},
-	{"port_poweroff",         0,   255, __ATTR(port_poweroff,         0664, sysfs_show, sysfs_store)},
-	{"switching_timeout",     0, 65535, __ATTR(switching_timeout,     0664, sysfs_show, sysfs_store)},
-	{"power_voltage_measure", 0,     0, __ATTR(power_voltage,         0444, sysfs_show, sysfs_ronly)},
-	{"capacitor_voltage_measure", 0, 0, __ATTR(capacitor_voltage,     0444, sysfs_show, sysfs_ronly)},
+	{MSG_SYS_POWEROFF,          0,     1,  0, __ATTR(sys_poweroff,          0220, sysfs_wonly, sysfs_storf)},
+	{MSG_BOOTUP,                0,     1,  0, __ATTR(bootup,                0220, sysfs_wonly, sysfs_storf)},
+	{MSG_SHUTDOWN_GUARD,        0,     1,  0, __ATTR(shutdown_guard,        0664, sysfs_show,  sysfs_storf)},
+	{MSG_POWER_STATE,           0,     0,  0, __ATTR(power_state,           0444, sysfs_show,  sysfs_ronly)},
+
+	{MSG_POWER_VOLTAGE_NOMINAL, 105, 300,  0, __ATTR(power_voltage_nominal, 0664, sysfs_show,  sysfs_storw)},
+	{MSG_POWER_VOLTAGE_MIN,     90,  300,  0, __ATTR(power_voltage_min,     0664, sysfs_show,  sysfs_storw)},
+	{MSG_CAPACITOR_VOLTAGE_MIN, 52,  140,  0, __ATTR(capacitor_voltage_min, 0664, sysfs_show,  sysfs_storw)},
+	{MSG_SWITCHING_VOLTAGE_MIN, 50,  300,  0, __ATTR(switching_voltage_min, 0664, sysfs_show,  sysfs_storw)},
+	{MSG_BATTERY_VOLTAGE_MIN,   50,  140,  0, __ATTR(battery_voltage_min,   0664, sysfs_show,  sysfs_storw)},
+	{MSG_BATTERY_VERSION,       0,     1,  0, __ATTR(battery_version,       0664, sysfs_show,  sysfs_storf)},
+	{MSG_PORT_POWEROFF,         0,   255,  0, __ATTR(port_poweroff,         0664, sysfs_show,  sysfs_storw)},
+	{MSG_SWITCHING_TIMEOUT,     0, 65535,  0, __ATTR(switching_timeout,     0664, sysfs_show,  sysfs_storw)},
+
+	{MSG_POWER_VOLTAGE,         0,     0,  1, __ATTR(power_voltage,         0444, sysfs_query, sysfs_ronly)},
+	{MSG_CAPACITOR_VOLTAGE,     0,     0,  1, __ATTR(capacitor_voltage,     0444, sysfs_query, sysfs_ronly)},
+	{MSG_SWITCHING_VOLTAGE,     0,     0,  1, __ATTR(switching_voltage,     0444, sysfs_query, sysfs_ronly)},
+	{MSG_PMUC_TEMPERATURE,      0,     0,  1, __ATTR(pmuc_temperature,      0444, sysfs_query, sysfs_ronly)},
 };
 
 static struct attribute *wp360_pmuc_attrs[N_ATTRIBUTES + 1];
@@ -50,21 +79,125 @@ static const struct kobj_type wp360_pmuc_ktype = {
 	.default_groups = wp360_pmuc_groups,
 };
 
+static ssize_t sysfs_wonly(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return -EINVAL;
+}
+
 static ssize_t sysfs_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	const struct wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
 	return sysfs_emit(buf, "%hd\n", data->value);
 }
 
-static ssize_t sysfs_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
+static ssize_t sysfs_query(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	struct wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
-	return kstrtou16(buf, 10, &data->value) ? 0 : count;
+	const struct wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
+	int ret = 0;
+	u8 querying = 0;
+	u8 cmd = data->cmd;
+
+	if (!atomic_cmpxchg(&data->querying, 0, 1))
+	{
+		querying = 1;
+		if (atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
+		{ // Another write is in progress
+			ret = wait_event_interruptible(write_buffer.waitq, !atomic_cmpxchg(&write_buffer.write_lock, 0, 1));
+			if (ret)
+			{
+				return -EINTR;
+			}
+		}	
+		data->value = 0xFFFF;
+		write_buffer.buffer[write_buffer.push_head].payload[0] = cmd;
+		write_buffer.buffer[write_buffer.push_head].size = 1;
+
+		if (++write_buffer.push_head == write_buffer.size)
+		{
+			write_buffer.push_head = 0;
+		}
+
+		atomic_set(&write_buffer.write_lock, 0);
+		wake_up(&write_buffer.waitq);
+	}
+
+	pr_info("[sysfs] Waiting for %s\n", data->name);
+	ret = wait_event_interruptible(data->waitq, (pr_info("[sysfs] Waking up?\n"), data->value != 0xFFFF));
+	pr_info("[sysfs] Woke up\n");
+	if (querying)
+	{
+		atomic_set(&data->querying, 0);
+	}
+	if (ret)
+	{
+		pr_info("[sysfs] Interrupted\n");
+		return -EINTR;
+	}
+	return sysfs_emit(buf, "%hd\n", data->value);
+}
+
+
+static ssize_t sysfs_storf(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	return sysfs_store(kobj, attr, buf, count, 1);
+}
+static ssize_t sysfs_storw(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	return sysfs_store(kobj, attr, buf, count, 2);
+}
+static ssize_t sysfs_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count, size_t size)
+{
+	u16     value;
+	struct  wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
+	struct  wp360_pmuc_message *msg;
+	u8 cmd = data->cmd;;
+
+	if (kstrtou16(buf, 10, &value))
+	{
+		return -EINVAL;
+	}
+	if (value < data->min_value || value > data->max_value)
+	{
+		return -EINVAL;
+	}
+	if (atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
+	{ // Another write is in progress
+		if (wait_event_interruptible(write_buffer.waitq, !atomic_cmpxchg(&write_buffer.write_lock, 0, 1)))
+		{
+			return -EINTR;
+		}
+	}
+	msg = write_buffer.buffer + write_buffer.push_head;
+	switch(size)
+	{
+	case (1):
+		msg->payload[0]  = cmd;
+		msg->payload[0] |= MSG_WRITE_MASK;
+		msg->payload[0] |= value ? 1 : 0;
+		break;
+	case (2):
+		msg->payload[0]  = cmd;
+		msg->payload[0] |= MSG_WRITE_MASK;
+		msg->payload[0] |= ( value & 0x0100) ? 1 : 0;
+		msg->payload[1]  = value & 0xFF;
+		break;
+	}
+	msg->size = size;
+
+	if (++write_buffer.push_head == write_buffer.size)
+	{
+		write_buffer.push_head = 0;
+	}
+
+	atomic_set(&write_buffer.write_lock, 0);
+	wake_up(&write_buffer.waitq);
+
+	return count;
 }
 
 static ssize_t sysfs_ronly(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
 {
-	return 0;
+	return -EINVAL;
 }
 
 // Dev interface
@@ -89,44 +222,19 @@ static struct gpio_desc *gpio_send, *gpio_recv;
 // threads and mutex and stuff
 static struct task_struct *wp360_pmuc_write_task;
 
-static struct wp360_pmuc_message _w_messages[BUF_LEN];
-static struct wp360_pmuc_message_buffer write_buffer = {
-	.push_head  = 0,
-	.pop_head   = 0,
-	.size       = BUF_LEN,
-	.buffer     = _w_messages,
-	.write_lock = ATOMIC_INIT(0)
-};
-
-static struct wp360_pmuc_message _r_messages[BUF_LEN];
-static struct wp360_pmuc_message_buffer read_buffer  = {
-	.push_head  = 0,
-	.pop_head   = 0,
-	.size       = BUF_LEN,
-	.buffer     = _r_messages,
-	.write_lock = ATOMIC_INIT(0)
-};
-static struct wp360_pmuc_message_recv recv_msg;
-
 static int irq;
 
 static int wp360_pmuc_write_thread(void *arg)
 {
-	pr_info("[w] KThread started\n");
 	sched_set_fifo(current);
-	pr_info("[w] Scheduler set\n");
-	//TODO: proper thread termination, proper signal handling
+	int ret;
 	//TODO: turn push_head into atomic, don't wait on write_buffer.write_lock
 	while (1)
 	{
-		pr_info("[w] Looping around...\n");
 		if (!atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
 		{
-			pr_info("[w] We're in\n");
-			// we're in
 			while (write_buffer.push_head != write_buffer.pop_head)
 			{
-				pr_info("[w] Popping a message...\n");
 				u64 delay  = 0;
 				u64 target = 0;
 				u64 time   = 0;
@@ -141,39 +249,37 @@ static int wp360_pmuc_write_thread(void *arg)
 					pr_info("[w] Sending 0x%02X%02X\n", msg.payload[0], msg.payload[1]);
 					delay = SYNC_WORD;
 					break;
+				case (3):
+					pr_info("[w] Sending 0x%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2]);
+					delay = SYNC_HWORD;
+					break;
 				case (4):
 					pr_info("[w] Sending 0x%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3]);
 					delay = SYNC_DWORD;
 					break;
+				case (5):
+					pr_info("[w] Sending 0x%02X%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3], msg.payload[4]);
+					delay = SYNC_PWORD;
+					break;
+				default:
+					pr_info("[w] Wrong message size in buffer, ignoring\n");
+					break;
 				}
-				// TODO: gracefully handle wrong size
-				gpiod_set_value(gpio_send, 1);
-				target = ktime_get_ns() + delay * 1000;
-				usleep_range(delay - MSG_DELAY_DELTA, delay - MSG_DELAY_DELTA);
-				time = ktime_get_ns();
-				if (time < target)
-					ndelay(target - time);
-				gpiod_set_value(gpio_send, 0);
-				target += PAUSE * 1000;
-				usleep_range(PAUSE - MSG_DELAY_DELTA, PAUSE - MSG_DELAY_DELTA);
-				time = ktime_get_ns();
-				if (time < target)
-					ndelay(target - time);
-				for (int bit = 0; bit < msg.size * 8; bit++)
+				if (delay)
 				{
 					gpiod_set_value(gpio_send, 1);
-					delay = ((msg.payload[bit >> 3] << (bit & 0x7)) & 0x80) ? PULSE_LENGTH_HIGH : PULSE_LENGTH_LOW;
-					target += delay * 1000;
-					usleep_range(delay - MSG_DELAY_DELTA, delay - MSG_DELAY_DELTA);
-					time = ktime_get_ns();
-					if (time < target)
-						ndelay(target - time);
+					target = ktime_get_ns();
+					PRECISE_SLEEP(delay);
 					gpiod_set_value(gpio_send, 0);
-					target += PAUSE * 1000;
-					usleep_range(PAUSE - MSG_DELAY_DELTA, PAUSE - MSG_DELAY_DELTA);
-					time = ktime_get_ns();
-					if (time < target)
-						ndelay(target - time);
+					PRECISE_SLEEP(PAUSE);				
+					for (int bit = 0; bit < msg.size * 8; bit++)
+					{
+						gpiod_set_value(gpio_send, 1);
+						delay = ((msg.payload[bit >> 3] << (bit & 0x7)) & 0x80) ? PULSE_LENGTH_HIGH : PULSE_LENGTH_LOW;
+						PRECISE_SLEEP(delay);
+						gpiod_set_value(gpio_send, 0);
+						PRECISE_SLEEP(PAUSE);
+					}
 				}
 				usleep_range(MSG_END_MIN, MSG_END_MAX);
 				if (++write_buffer.pop_head == write_buffer.size)
@@ -181,21 +287,23 @@ static int wp360_pmuc_write_thread(void *arg)
 					write_buffer.pop_head = 0;
 				}
 			}
-			pr_info("[w] We're out\n");
 			atomic_set(&write_buffer.write_lock, 0);
 		}
-		pr_info("[w] Waking others up\n");
 		wake_up(&write_buffer.waitq);
-		pr_info("[w] And now going to sleep myself\n");
-		wait_event_interruptible(write_buffer.waitq, (pr_info("[w] Wakeup test\n"), (!atomic_read(&write_buffer.write_lock) && (write_buffer.push_head != write_buffer.pop_head))));
-		// TODO: handle wait_event_interruptible signal
+		ret = wait_event_interruptible(write_buffer.waitq, !atomic_read(&write_buffer.write_lock) && (write_buffer.push_head != write_buffer.pop_head));
+		if (ret == -ERESTARTSYS)
+		{ // Received signal, terminate
+			pr_info("Received signal, exiting\n");
+			return -EINTR;
+		}
 	}
 	return 0;
 }
 
 static int wp360_pmuc_read_thread(void *arg)
-{
-	pr_info("[r] KThread started\n");
+{	
+	// TODO: be woken up by threaded interrupt, update sysfs parameters, wake up respective waitq
+	// Except I did all that in the threaded handler? I'll keep this around in case I ever need to do longer stuff
 	return 0;
 }
 
@@ -212,57 +320,61 @@ static irqreturn_t wp360_pmuc_interrupt(int irq, void *dev_id)
 		u64 dt = time - recv_msg.fall_time;
 		if (dt >= 300000 && dt <= 700000)
 		{ // Low bit
-			recv_msg.msg.payload[recv_msg.bit++ >> 3] <<= 1;
+			recv_msg.msg.payload[recv_msg.bit >> 3] <<= 1;
 		}
 		else if (dt >= 800000 && dt <= 1200000)
 		{ // High bit
 			recv_msg.msg.payload[recv_msg.bit >> 3] <<= 1;
 			recv_msg.msg.payload[recv_msg.bit >> 3] |=  1;
-			recv_msg.bit++;
 		}
 		else if (dt >= 1700000 && dt <= 2300000)
 		{ // Sync, byte incoming
 			recv_msg.msg.size = 1;
-			recv_msg.bit      = 0;
+			recv_msg.bit      = -1;
 		}
 		else if (dt >= 2700000 && dt <= 3300000)
 		{ // Sync, word incoming
 			recv_msg.msg.size = 2;
-			recv_msg.bit      = 0;
+			recv_msg.bit      = -1;
 		}
 		else if (dt >= 3700000 && dt <= 4300000)
 		{ // Sync, word+ incoming
 			recv_msg.msg.size = 3;
-			recv_msg.bit      = 0;
+			recv_msg.bit      = -1;
 		}
 		else if (dt >= 4700000 && dt <= 5300000)
 		{ // Sync, dword incoming
 			recv_msg.msg.size = 4;
-			recv_msg.bit      = 0;
+			recv_msg.bit      = -1;
 		}
 		else if (dt >= 5700000 && dt <= 6300000)
 		{ // Sync, dword+ incoming
 			recv_msg.msg.size = 5;
-			recv_msg.bit      = 0;
+			recv_msg.bit      = -1;
 		}
 		else
 		{ // Invalid signal, scrap everything
 			recv_msg.msg.size = 0;
 			recv_msg.bit      = 127;
 		}
-		if (recv_msg.bit < 127)
+		if (recv_msg.bit != 127)
 		{
+			recv_msg.bit++;
 			if (recv_msg.bit == (recv_msg.msg.size << 3))
 			{
 				read_buffer.buffer[read_buffer.push_head++] = recv_msg.msg;
 				read_buffer.push_head &= read_buffer.size - 1;
 				return IRQ_WAKE_THREAD;
 			}
+			else if (recv_msg.bit > (recv_msg.msg.size << 3))
+			{
+				recv_msg.bit = 127;
+			}
 		}
 		break;
 	default:
 		pr_err("Invalid gpio_recv state %d\n", state);
-		return IRQ_NONE;
+		return IRQ_HANDLED;
 		break;
 	}
 	return IRQ_HANDLED;
@@ -274,22 +386,60 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 	while (push_head != read_buffer.pop_head)
 	{
 		struct wp360_pmuc_message *msg = read_buffer.buffer + read_buffer.pop_head++;
+		u8  cmd = msg->payload[0] & MSG_CMD_MASK;
+		u64 value;
 		switch(msg->size)
 		{
 		case (1):
-			pr_info("Ooh, received %d byte! 0x%02X\n", msg->size, msg->payload[0]);
+			value = msg->payload[0] & MSG_FLAG_MASK;
 			break;
 		case (2):
-			pr_info("Ooh, received %d bytes! 0x%02X%02X\n", msg->size, msg->payload[0], msg->payload[1]);
+			pr_info("0x%02X%02X\n", msg->payload[0], msg->payload[1]);
+			value = READ_MSG_WORD(msg);
 			break;
 		case (3):
-			pr_info("Ooh, received %d bytes! 0x%02X%02X%02X\n", msg->size, msg->payload[0], msg->payload[1], msg->payload[2]);
+			pr_info("0x%02X%02X%02X\n", msg->payload[0], msg->payload[1], msg->payload[2]);
+			value = (msg->payload[1] << 8) | msg->payload[2];
 			break;
-		case (4):
-			pr_info("Ooh, received %d bytes! 0x%02X%02X%02X%02X\n", msg->size, msg->payload[0], msg->payload[1], msg->payload[2], msg->payload[3]);
+			// TODO: other cases
+		}
+		pr_info("Received 0x%02X[%d] %X\n", cmd, msg->size, value);
+		switch (cmd)
+		{
+		case (MSG_SYS_POWEROFF):
+			if (value)
+			{
+				static char * shutdown_argv[] = {"/sbin/shutdown", "-h", "-P", "now", NULL};
+				call_usermodehelper(shutdown_argv[0], shutdown_argv, NULL, UMH_NO_WAIT);
+			}
 			break;
-		case (5):
-			pr_info("Ooh, received %d bytes! 0x%02X%02X%02X%02X%02X\n", msg->size, msg->payload[0], msg->payload[1], msg->payload[2], msg->payload[3], msg->payload[4]);
+		case (MSG_POWER_STATE):
+		case (MSG_POWER_VOLTAGE):
+		case (MSG_CAPACITOR_VOLTAGE):
+		case (MSG_SWITCHING_VOLTAGE):
+		case (MSG_POWER_VOLTAGE_NOMINAL):
+		case (MSG_POWER_VOLTAGE_MIN):
+		case (MSG_CAPACITOR_VOLTAGE_MIN):
+		case (MSG_SWITCHING_VOLTAGE_MIN):
+		case (MSG_BATTERY_VOLTAGE_MIN):
+		case (MSG_BATTERY_VERSION):
+		case (MSG_PORT_POWEROFF):
+		case (MSG_SWITCHING_TIMEOUT):
+		case (MSG_PMUC_TEMPERATURE):
+			struct wp360_pmuc_sysfs_attribute *data;
+			for (int i = 0; i < sizeof(attributes) / sizeof(struct wp360_pmuc_sysfs_attribute); i++)
+			{
+				if (attributes[i].cmd == cmd)
+				{
+					data = attributes + i;
+					break;
+				}
+			}
+			data->value = value;
+			if (data->has_queue)
+			{
+				wake_up(&data->waitq);
+			}
 			break;
 		}
 		read_buffer.pop_head &= read_buffer.size - 1;
@@ -301,14 +451,16 @@ static int devicemodel_probe(struct platform_device *dev)
 {
 	pr_info("devicemodel probe\n");
 	gpio_send = gpiod_get_index(&dev->dev, "comm", 0, GPIOD_OUT_LOW);
-	gpio_recv = gpiod_get_index(&dev->dev, "comm", 1, GPIOD_IN);
 	if (IS_ERR(gpio_send))
 	{
 		pr_err("GPIO send request failed: %ld\n", PTR_ERR(gpio_send));
 		return PTR_ERR(gpio_send);
 	}
+
+	gpio_recv = gpiod_get_index(&dev->dev, "comm", 1, GPIOD_IN);
 	if (IS_ERR(gpio_recv))
 	{
+		gpiod_put(gpio_send);
 		pr_err("GPIO recv request failed: %ld\n", PTR_ERR(gpio_recv));
 		return PTR_ERR(gpio_recv);
 	}
@@ -316,11 +468,18 @@ static int devicemodel_probe(struct platform_device *dev)
 	irq = gpiod_to_irq(gpio_recv);
 	if (irq < 0)
 	{
-		pr_err("GPIO to IRQ failed");
+		pr_err("GPIO to IRQ failed\n");
 		return irq;
 	}
 
 	int ret = request_threaded_irq(irq, wp360_pmuc_interrupt, wp360_pmuc_interrupt_thread, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, DEVICE_NAME, (void *) dev);
+	if (ret)
+	{
+		pr_err("Could not request IRQ\n");
+		gpiod_put(gpio_recv);
+		gpiod_put(gpio_send);
+		return ret;
+	}
 	
 	return 0;
 }
@@ -366,7 +525,8 @@ static struct platform_driver devicemodel_driver = {
 static int __init wp360_pmuc_driver_init(void)
 {
 	int retval;
-	
+	// TODO: move most code from here to device_probe
+	// TODO: put most static vars to a struct, allocate it in device_probe, free it on release
 	major = register_chrdev(0, DEVICE_NAME, &chardev_fops);
 	if (major < 0)
 	{
@@ -385,6 +545,11 @@ static int __init wp360_pmuc_driver_init(void)
 	
 	init_waitqueue_head(&write_buffer.waitq);
 	init_waitqueue_head(&read_buffer.waitq);
+
+	init_waitqueue_head(&attributes[8].waitq);
+	init_waitqueue_head(&attributes[9].waitq);
+	init_waitqueue_head(&attributes[10].waitq);
+	init_waitqueue_head(&attributes[11].waitq);
 
 	for (int i = 0; i < N_ATTRIBUTES; i++)
 	{
@@ -429,19 +594,20 @@ static int device_open(struct inode *inode, struct file *file)
 	// Device was opened, I might want to keep track of this?
 	// Definitely gonna have to keep track of this
 	// TODO: prohibit nonblocking read open because it makes zero sense
-	// TODO: 
+	// TODO: on read, set private_data to a struct containing a shared waitq and a private pophead
 
 	return 0;
 }
 
 static int device_release(struct inode *inode, struct file *file)
-
 {
+	// TODO: free private_data
 	return 0;
 }
 
 static ssize_t device_read(struct file *filp, char __user *buffer, size_t length, loff_t *offset)
 {
+	// TODO: wait_event_interruptible(pd->waitq, pd->pop_head != read_buffer.push_head)
 	int bytes_read = 0;
 	const char *msg_ptr = msg;
 
@@ -481,7 +647,9 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 	{
 		case (1):
 		case (2):
+		case (3):
 		case (4):
+		case (5):
 			break;
 		default:
 			pr_info("Invalid number of bytes: %lu\n", len);
@@ -491,14 +659,14 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 
 	if (!access_ok(buff, len))
 	{
-		pr_info("Couldn't move buffer in kernelspace\n");
+		pr_info("Couldn't access user buffer\n");
 		return -EINVAL;
 	}
 
-	pr_info("Trying to add to buffer...\n");
 	if (atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
-	{
-		pr_info("Something's going on, I'll wait a bit\n");
+	{ // Another write is in progress
+	  // TODO: return -EAGAIN if blocking
+	  // TODO: return -EINTR if interrupted
 		wait_event_interruptible(write_buffer.waitq, !atomic_cmpxchg(&write_buffer.write_lock, 0, 1));
 	}
 	
@@ -520,8 +688,6 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 
 	wake_up(&write_buffer.waitq);
 
-	// Read bytes, add them to send buffer
-	// Return actual number of written bytes
 	return len;
 }
 
