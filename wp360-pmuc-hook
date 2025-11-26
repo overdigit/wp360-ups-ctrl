@@ -2,7 +2,7 @@
 PREREQ=""
 prereqs()
 {
-  echo "$PREREQ"
+echo "$PREREQ"
 }
 case $1 in
 prereqs)
@@ -11,6 +11,6 @@ prereqs)
 ;;
 esac
 
-. /scripts/functions
+. /usr/share/initramfs-tools/hook-functions
 # Begin real processing below this line
-gpioset --bias=pull-down --drive=push-pull -c 0 -t 5,0 24=1
+force_load wp360_pmuc

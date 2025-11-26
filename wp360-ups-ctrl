@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-gpiomon -n 1 -e falling -c 0 22 && shutdown now
-exit 1
-

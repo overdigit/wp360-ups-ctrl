@@ -1,3 +1,9 @@
+wp360-pmuc (2.0.0-1) trixie; urgency=low
+
+  * Add kernel driver for pmuc communication/management.
+
+ -- Overdigit <info@overdigit.com>  Wed, 26 Nov 2025 14:28:35 +0100
+
 wp360-ups-ctrl (1.2.0-1) trixie; urgency=low
 
   * Manually set poweroff pin.

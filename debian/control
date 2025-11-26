@@ -1,16 +1,27 @@
-Source: wp360-ups-ctrl
+Source: wp360-pmuc
 Section: misc
 Priority: optional
 Maintainer: Overdigit <info@overdigit.com>
-Build-Depends: debhelper-compat (= 13), libgpiod-dev, gcc
+Build-Depends: dh-dkms, device-tree-compiler, debhelper-compat (= 13)
 Standards-Version: 4.5.1
 #Homepage: <insert the upstream URL, if relevant>
 Rules-Requires-Root: no
-#Vcs-Git: https://salsa.debian.org/debian/wp360-packages.git
-#Vcs-Browser: https://salsa.debian.org/debian/wp360-packages
 
 Package: wp360-ups-ctrl
 Architecture: all
-Maintainer: Overdigit <info@overdigit.com>
-Depends: ${misc:Depends}, initramfs-tools, systemd
-Description: Package containing a script and a service to turn off the system when signaled on pin 22.
+Depends: wp360-pmuc, ${misc:Depends}
+Section: oldlibs
+Description: transitional package
+  This is a transitional package. It can safely be removed.
+
+Package: wp360-pmuc
+Architecture: all
+Depends: wp360-pmuc-dkms, ${misc:Depends}
+Section: misc
+Description: WP360 Power Management MicroController driver
+
+Package: wp360-pmuc-dkms
+Architecture: all
+Depends: ${misc:Depends}
+Section: misc
+Description: WP360 Power Management MicroController driver (kernel module)

@@ -1,0 +1,6 @@
+usr/lib/systemd/system-shutdown/wp360-pmuc-poweroff
+usr/lib/systemd/system/codesyscontrol.service.d/20-wp360-pmuc.conf
+usr/share/initramfs-tools/hooks/wp360-pmuc-hook
+usr/share/initramfs-tools/scripts/init-bottom/wp360-pmuc-script
+usr/share/wp360-pmuc/wp360-pmuc-cm4.dtbo
+usr/share/wp360-pmuc/wp360-pmuc-cm5.dtbo

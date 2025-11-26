@@ -2,7 +2,7 @@
 PREREQ=""
 prereqs()
 {
-echo "$PREREQ"
+  echo "$PREREQ"
 }
 case $1 in
 prereqs)
@@ -11,7 +11,6 @@ prereqs)
 ;;
 esac
 
-. /usr/share/initramfs-tools/hook-functions
+. /scripts/functions
 # Begin real processing below this line
-force_load gpio_keys
-copy_exec $(which gpioset)
+echo 1 > /sys/kernel/wp360-pmuc/bootup

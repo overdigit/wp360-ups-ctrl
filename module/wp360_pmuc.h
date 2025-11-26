@@ -21,6 +21,8 @@
 #define MSG_END_MAX       2000
 #define MSG_DELAY_DELTA   5
 
+#define MSG_MAX_SIZE      5
+
 // Module metadata
 MODULE_AUTHOR("Nicola Orlando");
 MODULE_DESCRIPTION("WP360 power management microcontroller driver");
@@ -32,8 +34,14 @@ static int device_release(struct inode *, struct file *);
 static ssize_t device_read (struct file *,       char __user *, size_t, loff_t *);
 static ssize_t device_write(struct file *, const char __user *, size_t, loff_t *);
 
+struct wp360_pmuc_device_read_head {
+	wait_queue_head_t *waitq;
+	size_t             pop_head;
+};
+
 static ssize_t sysfs_show (struct kobject *, struct kobj_attribute *,       char *);
 static ssize_t sysfs_query(struct kobject *, struct kobj_attribute *,       char *);
+static ssize_t sysfs_wonly(struct kobject *, struct kobj_attribute *,       char *);
 static ssize_t sysfs_storf(struct kobject *, struct kobj_attribute *, const char *, size_t);
 static ssize_t sysfs_storw(struct kobject *, struct kobj_attribute *, const char *, size_t);
 static ssize_t sysfs_store(struct kobject *, struct kobj_attribute *, const char *, size_t, size_t);
@@ -59,14 +67,13 @@ static int  devicemodel_resume (struct device *);
 #define USLEEP(usec)        usleep_range(usec - MSG_DELAY_DELTA, usec - MSG_DELAY_DELTA)
 #define PRECISE_SLEEP(usec) { target += usec*1000; USLEEP(usec); time = ktime_get_ns(); if (time < target) ndelay(target-time); }
 static int  wp360_pmuc_write_thread(void *);
-static int  wp360_pmuc_read_thread (void *);
 
 static irqreturn_t wp360_pmuc_interrupt       (int, void *);
 static irqreturn_t wp360_pmuc_interrupt_thread(int, void *);
 
 struct wp360_pmuc_message {
 	u8 size;
-	u8 payload[5];
+	u8 payload[MSG_MAX_SIZE];
 };
 
 struct wp360_pmuc_message_recv {
@@ -84,6 +91,19 @@ struct wp360_pmuc_message_buffer {
 	wait_queue_head_t          waitq;
 };
 
+/*
+struct wp360_pmuc_device {
+	struct wp360_pmuc_message_buffer write_buffer;
+	struct wp360_pmuc_message_buffer read_buffer;
+	struct wp360_pmuc_message_recv   recv_msg;
+
+	struct gpio_desc                *gpio_send;
+	struct gpio_desc                *gpio_recv;
+	struct task_struct              *write_task;
+	int                              irq;
+}
+//*/
+
 // Codifica dei messaggi CPU <-> UPS.
 #define MSG_WRITE_MASK             0x80   // bit messaggio in scrittura
 #define MSG_CMD_MASK               0x3E   // maschera selezione comando
@@ -100,7 +120,7 @@ struct wp360_pmuc_message_buffer {
 #define MSG_CAPACITOR_VOLTAGE_MIN  0x14   // tensione di fine carica supercap per avvio
 #define MSG_SWITCHING_VOLTAGE_MIN  0x16   // tensione minima ingresso regolatore switching
 #define MSG_BATTERY_VOLTAGE_MIN    0x18   // tensione minima batteria tampone
-#define MSG_BATTERY_VERSION        0x1A   // versione a batteria tampone
+#define MSG_PROGRAM_VERSION        0x1A   // versione a batteria tampone
 #define MSG_PORT_POWEROFF          0x1C   // configurazione spegnimento porte
 #define MSG_SWITCHING_TIMEOUT      0x1E   // timeout spegnimento switching forzato
 //

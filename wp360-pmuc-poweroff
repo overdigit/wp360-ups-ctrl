@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+echo 1 > /sys/kernel/wp360-pmuc/sys_poweroff

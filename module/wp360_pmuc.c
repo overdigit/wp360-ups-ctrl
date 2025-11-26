@@ -23,7 +23,7 @@
 #include <linux/atomic.h>
 #include <linux/interrupt.h>
 
-#include "wp360-pmuc-driver.h"
+#include "wp360_pmuc.h"
 
 // Send/receive buffers
 static struct wp360_pmuc_message _w_messages[BUF_LEN];
@@ -61,7 +61,7 @@ static struct wp360_pmuc_sysfs_attribute attributes[] = {
 	{MSG_CAPACITOR_VOLTAGE_MIN, 52,  140,  0, __ATTR(capacitor_voltage_min, 0664, sysfs_show,  sysfs_storw)},
 	{MSG_SWITCHING_VOLTAGE_MIN, 50,  300,  0, __ATTR(switching_voltage_min, 0664, sysfs_show,  sysfs_storw)},
 	{MSG_BATTERY_VOLTAGE_MIN,   50,  140,  0, __ATTR(battery_voltage_min,   0664, sysfs_show,  sysfs_storw)},
-	{MSG_BATTERY_VERSION,       0,     1,  0, __ATTR(battery_version,       0664, sysfs_show,  sysfs_storf)},
+	{MSG_PROGRAM_VERSION,       0,   255,  0, __ATTR(program_version,       0664, sysfs_show,  sysfs_storw)},
 	{MSG_PORT_POWEROFF,         0,   255,  0, __ATTR(port_poweroff,         0664, sysfs_show,  sysfs_storw)},
 	{MSG_SWITCHING_TIMEOUT,     0, 65535,  0, __ATTR(switching_timeout,     0664, sysfs_show,  sysfs_storw)},
 
@@ -92,7 +92,7 @@ static ssize_t sysfs_show(struct kobject *kobj, struct kobj_attribute *attr, cha
 
 static ssize_t sysfs_query(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	const struct wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
+	struct wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
 	int ret = 0;
 	u8 querying = 0;
 	u8 cmd = data->cmd;
@@ -105,6 +105,7 @@ static ssize_t sysfs_query(struct kobject *kobj, struct kobj_attribute *attr, ch
 			ret = wait_event_interruptible(write_buffer.waitq, !atomic_cmpxchg(&write_buffer.write_lock, 0, 1));
 			if (ret)
 			{
+				atomic_set(&data->querying, 0);
 				return -EINTR;
 			}
 		}	
@@ -121,7 +122,7 @@ static ssize_t sysfs_query(struct kobject *kobj, struct kobj_attribute *attr, ch
 		wake_up(&write_buffer.waitq);
 	}
 
-	pr_info("[sysfs] Waiting for %s\n", data->name);
+	pr_info("[sysfs] Waiting for 0x%02X\n", data->cmd);
 	ret = wait_event_interruptible(data->waitq, (pr_info("[sysfs] Waking up?\n"), data->value != 0xFFFF));
 	pr_info("[sysfs] Woke up\n");
 	if (querying)
@@ -212,10 +213,6 @@ static struct file_operations chardev_fops = {
 	.release = device_release,
 };
 
-DEFINE_MUTEX(chardev_write);
-
-static char msg[BUF_LEN + 1] = "Hi, this is a weird message\n";
-
 // GPIO and device tree
 static struct gpio_desc *gpio_send, *gpio_recv;
 
@@ -228,7 +225,6 @@ static int wp360_pmuc_write_thread(void *arg)
 {
 	sched_set_fifo(current);
 	int ret;
-	//TODO: turn push_head into atomic, don't wait on write_buffer.write_lock
 	while (1)
 	{
 		if (!atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
@@ -297,13 +293,6 @@ static int wp360_pmuc_write_thread(void *arg)
 			return -EINTR;
 		}
 	}
-	return 0;
-}
-
-static int wp360_pmuc_read_thread(void *arg)
-{	
-	// TODO: be woken up by threaded interrupt, update sysfs parameters, wake up respective waitq
-	// Except I did all that in the threaded handler? I'll keep this around in case I ever need to do longer stuff
 	return 0;
 }
 
@@ -383,6 +372,7 @@ static irqreturn_t wp360_pmuc_interrupt(int irq, void *dev_id)
 static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 {
 	int push_head = read_buffer.push_head;
+	wake_up(&read_buffer.waitq);
 	while (push_head != read_buffer.pop_head)
 	{
 		struct wp360_pmuc_message *msg = read_buffer.buffer + read_buffer.pop_head++;
@@ -401,9 +391,14 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 			pr_info("0x%02X%02X%02X\n", msg->payload[0], msg->payload[1], msg->payload[2]);
 			value = (msg->payload[1] << 8) | msg->payload[2];
 			break;
-			// TODO: other cases
+		case (4):
+			value = (msg->payload[1] << 16) | (msg->payload[2] << 8) | msg->payload[3];
+			break;
+		case (5):
+			value = (msg->payload[1] << 24) | (msg->payload[2] << 16) | (msg->payload[3] << 8) | msg->payload[4];
+			break;
 		}
-		pr_info("Received 0x%02X[%d] %X\n", cmd, msg->size, value);
+		pr_info("Received 0x%02X[%d] %llX\n", cmd, msg->size, value);
 		switch (cmd)
 		{
 		case (MSG_SYS_POWEROFF):
@@ -422,7 +417,7 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 		case (MSG_CAPACITOR_VOLTAGE_MIN):
 		case (MSG_SWITCHING_VOLTAGE_MIN):
 		case (MSG_BATTERY_VOLTAGE_MIN):
-		case (MSG_BATTERY_VERSION):
+		case (MSG_PROGRAM_VERSION):
 		case (MSG_PORT_POWEROFF):
 		case (MSG_SWITCHING_TIMEOUT):
 		case (MSG_PMUC_TEMPERATURE):
@@ -539,6 +534,7 @@ static int __init wp360_pmuc_driver_init(void)
 #else
 	cls = class_create(THIS_MODULE, DEVICE_NAME);
 #endif
+	cls->dev_groups = wp360_pmuc_groups;
 	device_create(cls, NULL, MKDEV(major, 0), NULL, DEVICE_NAME);
 
 	pr_info("Device created on /dev/%s\n", DEVICE_NAME);
@@ -546,13 +542,12 @@ static int __init wp360_pmuc_driver_init(void)
 	init_waitqueue_head(&write_buffer.waitq);
 	init_waitqueue_head(&read_buffer.waitq);
 
-	init_waitqueue_head(&attributes[8].waitq);
-	init_waitqueue_head(&attributes[9].waitq);
-	init_waitqueue_head(&attributes[10].waitq);
-	init_waitqueue_head(&attributes[11].waitq);
-
 	for (int i = 0; i < N_ATTRIBUTES; i++)
 	{
+		if (attributes[i].has_queue)
+		{
+			init_waitqueue_head(&attributes[i].waitq);
+		}
 		wp360_pmuc_attrs[i] = &attributes[i].attribute.attr;
 	}
 
@@ -593,46 +588,62 @@ static int device_open(struct inode *inode, struct file *file)
 {
 	// Device was opened, I might want to keep track of this?
 	// Definitely gonna have to keep track of this
-	// TODO: prohibit nonblocking read open because it makes zero sense
-	// TODO: on read, set private_data to a struct containing a shared waitq and a private pophead
 
+	if (file->f_mode & FMODE_READ)
+	{
+		struct wp360_pmuc_device_read_head *p = kzalloc(sizeof(struct wp360_pmuc_device_read_head), GFP_KERNEL);
+		if (!p)
+		{
+			pr_err("Could not allocate memory for device open\n");
+			return -ENOMEM;
+		}
+		file->private_data = p;
+		p->waitq = &read_buffer.waitq;
+		p->pop_head = read_buffer.pop_head;
+	}
+	else
+	{
+		file->private_data = NULL;
+	}
 	return 0;
 }
 
 static int device_release(struct inode *inode, struct file *file)
 {
-	// TODO: free private_data
+	if (file->private_data != NULL)
+	{
+		kfree(file->private_data);
+	}
 	return 0;
 }
 
 static ssize_t device_read(struct file *filp, char __user *buffer, size_t length, loff_t *offset)
 {
-	// TODO: wait_event_interruptible(pd->waitq, pd->pop_head != read_buffer.push_head)
-	int bytes_read = 0;
-	const char *msg_ptr = msg;
+	// TODO: if non-blocking, return -EAGAIN instead of waiting
+	struct wp360_pmuc_device_read_head *rh    = filp->private_data;
+	struct wp360_pmuc_message           *msg;
+	pr_info("[read] offset = %p\n", offset);
 
-	if (!*(msg_ptr + *offset))
+	if (rh->pop_head == read_buffer.push_head)
 	{
-		*offset = 0;
-		return 0;
+		if (wait_event_interruptible(*rh->waitq, (pr_info("[read] Woken up?\n"), rh->pop_head != read_buffer.push_head)))
+		{
+			return -EINTR;
+		}
 	}
 
-	msg_ptr += *offset;
-
-	while (length && *msg_ptr) {
-		/* The buffer is in the user data segment, not the kernel
-		 * segment so "*" assignment won't work.  We have to use
-		 * put_user which copies data from the kernel data segment to
-		 * the user data segment.
-		 */
-		put_user(*(msg_ptr++), buffer++);
-		length--;
-		bytes_read++;
+	pr_info("[read] Woken up\n");
+	msg = read_buffer.buffer + rh->pop_head;
+	if (copy_to_user(buffer, msg->payload, msg->size))
+	{
+		// TODO: proper return value
+		return -EINVAL;
 	}
 
-	*offset += bytes_read;
+	rh->pop_head = (rh->pop_head + 1) & (read_buffer.size - 1);
+	pr_info("[read] Returned %u bytes\n", msg->size);
 
-	return bytes_read;
+	return msg->size;
 }
 
 static ssize_t device_write(struct file *filp, const char __user *buff, size_t len, loff_t *off)
@@ -666,8 +677,10 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 	if (atomic_cmpxchg(&write_buffer.write_lock, 0, 1))
 	{ // Another write is in progress
 	  // TODO: return -EAGAIN if blocking
-	  // TODO: return -EINTR if interrupted
-		wait_event_interruptible(write_buffer.waitq, !atomic_cmpxchg(&write_buffer.write_lock, 0, 1));
+		if (wait_event_interruptible(write_buffer.waitq, !atomic_cmpxchg(&write_buffer.write_lock, 0, 1)))
+		{
+			return -EINTR;
+		}
 	}
 	
 	if (__copy_from_user(write_buffer.buffer[write_buffer.push_head].payload, buff, len))

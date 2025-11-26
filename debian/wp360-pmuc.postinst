@@ -1,0 +1,7 @@
+#!/bin/bash
+
+if [[ "$1" = "configure" ]]
+then
+  cp /usr/share/wp360-pmuc/wp360-pmuc-cm4.dtbo /boot/firmware/overlays/
+  cp /usr/share/wp360-pmuc/wp360-pmuc-cm5.dtbo /boot/firmware/overlays/
+fi
