@@ -61,9 +61,9 @@ static struct wp360_pmuc_sysfs_attribute attributes[] = {
 	{MSG_CAPACITOR_VOLTAGE_MIN, 52,   140,  0, __ATTR(capacitor_voltage_min, 0644, sysfs_show,  sysfs_storb) },
 	{MSG_SWITCHING_VOLTAGE_MIN, 50,   300,  0, __ATTR(switching_voltage_min, 0644, sysfs_show,  sysfs_storb) },
 	{MSG_BATTERY_VOLTAGE_MIN,   50,   140,  0, __ATTR(battery_voltage_min,   0644, sysfs_show,  sysfs_storb) },
-	{MSG_PROGRAM_VERSION,       0,    255,  0, __ATTR(program_version,       0644, sysfs_show,  sysfs_storb) },
-	{MSG_PORT_POWEROFF,         0,    255,  0, __ATTR(port_poweroff,         0644, sysfs_show,  sysfs_storb) },
-	{MSG_SWITCHING_TIMEOUT,     0, 0xFFFE,  0, __ATTR(switching_timeout,     0644, sysfs_show,  sysfs_storb) },
+	{MSG_PROGRAM_VERSION,       0,   0xFF,  0, __ATTR(program_version,       0644, sysfs_show,  sysfs_storb) },
+	{MSG_PORT_POWEROFF,         0,   0xFF,  0, __ATTR(port_poweroff,         0644, sysfs_show,  sysfs_storb) },
+	{MSG_SWITCHING_TIMEOUT,     0,  0x1FF,  0, __ATTR(switching_timeout,     0644, sysfs_show,  sysfs_storb) },
 
 	{MSG_POWER_VOLTAGE,         0,      0,  1, __ATTR(power_voltage,         0444, sysfs_query, sysfs_ronly) },
 	{MSG_CAPACITOR_VOLTAGE,     0,      0,  1, __ATTR(capacitor_voltage,     0444, sysfs_query, sysfs_ronly) },
@@ -440,7 +440,7 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 		case (MSG_WATCHDOG_ENABLE):
 		case (MSG_WATCHDOG_TRIGGER):
 			struct wp360_pmuc_sysfs_attribute *data;
-			for (int i = 0; i < sizeof(attributes) / sizeof(struct wp360_pmuc_sysfs_attribute); i++)
+			for (int i = 0; i < N_ATTRIBUTES; i++)
 			{
 				if (attributes[i].cmd == cmd)
 				{
