@@ -51,24 +51,27 @@ static struct kobject mymodule;
 
 #define N_ATTRIBUTES (sizeof(attributes)/sizeof(struct wp360_pmuc_sysfs_attribute))
 static struct wp360_pmuc_sysfs_attribute attributes[] = {
-	{MSG_SYS_POWEROFF,          0,     1,  0, __ATTR(sys_poweroff,          0220, sysfs_wonly, sysfs_storf)},
-	{MSG_BOOTUP,                0,     1,  0, __ATTR(bootup,                0220, sysfs_wonly, sysfs_storf)},
-	{MSG_SHUTDOWN_GUARD,        0,     1,  0, __ATTR(shutdown_guard,        0664, sysfs_show,  sysfs_storf)},
-	{MSG_POWER_STATE,           0,     0,  0, __ATTR(power_state,           0444, sysfs_show,  sysfs_ronly)},
+	{MSG_SYS_POWEROFF,          0,      1,  0, __ATTR(sys_poweroff,          0200, sysfs_wonly, sysfs_storf) },
+	{MSG_BOOTUP,                0,      1,  0, __ATTR(bootup,                0200, sysfs_wonly, sysfs_storf) },
+	{MSG_SHUTDOWN_GUARD,        0,      1,  0, __ATTR(shutdown_guard,        0644, sysfs_show,  sysfs_storf) },
+	{MSG_POWER_STATE,           0,      0,  0, __ATTR(power_state,           0444, sysfs_show,  sysfs_ronly) },
 
-	{MSG_POWER_VOLTAGE_NOMINAL, 105, 300,  0, __ATTR(power_voltage_nominal, 0664, sysfs_show,  sysfs_storw)},
-	{MSG_POWER_VOLTAGE_MIN,     90,  300,  0, __ATTR(power_voltage_min,     0664, sysfs_show,  sysfs_storw)},
-	{MSG_CAPACITOR_VOLTAGE_MIN, 52,  140,  0, __ATTR(capacitor_voltage_min, 0664, sysfs_show,  sysfs_storw)},
-	{MSG_SWITCHING_VOLTAGE_MIN, 50,  300,  0, __ATTR(switching_voltage_min, 0664, sysfs_show,  sysfs_storw)},
-	{MSG_BATTERY_VOLTAGE_MIN,   50,  140,  0, __ATTR(battery_voltage_min,   0664, sysfs_show,  sysfs_storw)},
-	{MSG_PROGRAM_VERSION,       0,   255,  0, __ATTR(program_version,       0664, sysfs_show,  sysfs_storw)},
-	{MSG_PORT_POWEROFF,         0,   255,  0, __ATTR(port_poweroff,         0664, sysfs_show,  sysfs_storw)},
-	{MSG_SWITCHING_TIMEOUT,     0, 65535,  0, __ATTR(switching_timeout,     0664, sysfs_show,  sysfs_storw)},
+	{MSG_POWER_VOLTAGE_NOMINAL, 105,  300,  0, __ATTR(power_voltage_nominal, 0644, sysfs_show,  sysfs_storb) },
+	{MSG_POWER_VOLTAGE_MIN,     90,   300,  0, __ATTR(power_voltage_min,     0644, sysfs_show,  sysfs_storb) },
+	{MSG_CAPACITOR_VOLTAGE_MIN, 52,   140,  0, __ATTR(capacitor_voltage_min, 0644, sysfs_show,  sysfs_storb) },
+	{MSG_SWITCHING_VOLTAGE_MIN, 50,   300,  0, __ATTR(switching_voltage_min, 0644, sysfs_show,  sysfs_storb) },
+	{MSG_BATTERY_VOLTAGE_MIN,   50,   140,  0, __ATTR(battery_voltage_min,   0644, sysfs_show,  sysfs_storb) },
+	{MSG_PROGRAM_VERSION,       0,    255,  0, __ATTR(program_version,       0644, sysfs_show,  sysfs_storb) },
+	{MSG_PORT_POWEROFF,         0,    255,  0, __ATTR(port_poweroff,         0644, sysfs_show,  sysfs_storb) },
+	{MSG_SWITCHING_TIMEOUT,     0, 0xFFFE,  0, __ATTR(switching_timeout,     0644, sysfs_show,  sysfs_storb) },
 
-	{MSG_POWER_VOLTAGE,         0,     0,  1, __ATTR(power_voltage,         0444, sysfs_query, sysfs_ronly)},
-	{MSG_CAPACITOR_VOLTAGE,     0,     0,  1, __ATTR(capacitor_voltage,     0444, sysfs_query, sysfs_ronly)},
-	{MSG_SWITCHING_VOLTAGE,     0,     0,  1, __ATTR(switching_voltage,     0444, sysfs_query, sysfs_ronly)},
-	{MSG_PMUC_TEMPERATURE,      0,     0,  1, __ATTR(pmuc_temperature,      0444, sysfs_query, sysfs_ronly)},
+	{MSG_POWER_VOLTAGE,         0,      0,  1, __ATTR(power_voltage,         0444, sysfs_query, sysfs_ronly) },
+	{MSG_CAPACITOR_VOLTAGE,     0,      0,  1, __ATTR(capacitor_voltage,     0444, sysfs_query, sysfs_ronly) },
+	{MSG_SWITCHING_VOLTAGE,     0,      0,  1, __ATTR(switching_voltage,     0444, sysfs_query, sysfs_ronly) },
+	{MSG_PMUC_TEMPERATURE,      0,      0,  1, __ATTR(pmuc_temperature,      0444, sysfs_query, sysfs_ronly) },
+	{MSG_FAN_VOLTAGE,           20,    90,  0, __ATTR(fan_voltage,           0644, sysfs_show,  sysfs_storb) },
+	{MSG_WATCHDOG_ENABLE,       0, 0xFFFE,  0, __ATTR(watchdog_enable,       0644, sysfs_show,  sysfs_storw) },
+	{MSG_WATCHDOG_TRIGGER,      0,      0,  1, __ATTR(watchdog_trigger,      0444, sysfs_query, sysfs_ronly), .querying = ATOMIC_INIT(1)},
 };
 
 static struct attribute *wp360_pmuc_attrs[N_ATTRIBUTES + 1];
@@ -142,9 +145,13 @@ static ssize_t sysfs_storf(struct kobject *kobj, struct kobj_attribute *attr, co
 {
 	return sysfs_store(kobj, attr, buf, count, 1);
 }
-static ssize_t sysfs_storw(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
+static ssize_t sysfs_storb(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
 {
 	return sysfs_store(kobj, attr, buf, count, 2);
+}
+static ssize_t sysfs_storw(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	return sysfs_store(kobj, attr, buf, count, 3);
 }
 static ssize_t sysfs_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count, size_t size)
 {
@@ -182,6 +189,14 @@ static ssize_t sysfs_store(struct kobject *kobj, struct kobj_attribute *attr, co
 		msg->payload[0] |= ( value & 0x0100) ? 1 : 0;
 		msg->payload[1]  = value & 0xFF;
 		break;
+	case (3):
+		msg->payload[0]  = cmd;
+		msg->payload[0] |= MSG_WRITE_MASK;
+		msg->payload[1]  = value >> 8;
+		msg->payload[2]  = value & 0xFF;
+		break;
+	default:
+		return -EINVAL;
 	}
 	msg->size = size;
 
@@ -421,6 +436,9 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 		case (MSG_PORT_POWEROFF):
 		case (MSG_SWITCHING_TIMEOUT):
 		case (MSG_PMUC_TEMPERATURE):
+		case (MSG_FAN_VOLTAGE):
+		case (MSG_WATCHDOG_ENABLE):
+		case (MSG_WATCHDOG_TRIGGER):
 			struct wp360_pmuc_sysfs_attribute *data;
 			for (int i = 0; i < sizeof(attributes) / sizeof(struct wp360_pmuc_sysfs_attribute); i++)
 			{

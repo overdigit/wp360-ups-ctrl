@@ -128,5 +128,8 @@ struct wp360_pmuc_device {
 #define MSG_CAPACITOR_VOLTAGE      0x22   // tensione di carica supercapacitor attuale
 #define MSG_SWITCHING_VOLTAGE      0x24   // tensione su ingresso switching attuale
 #define MSG_PMUC_TEMPERATURE       0x26   // temperatura pmuc
+#define MSG_FAN_VOLTAGE            0x28   // tensione ventole (20-90% -> 2.65-5V)
+#define MSG_WATCHDOG_ENABLE        0x2C   // abilitazione sul PMUC del watchdog CPU
+#define MSG_WATCHDOG_TRIGGER       0x2E   // scadenza del watchdog CPU
 
 #define READ_MSG_WORD(msg) (((msg->payload[0] << 8) + msg->payload[1]) & MSG_WORD_MASK)
