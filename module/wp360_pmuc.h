@@ -44,6 +44,7 @@ static ssize_t sysfs_query(struct kobject *, struct kobj_attribute *,       char
 static ssize_t sysfs_wonly(struct kobject *, struct kobj_attribute *,       char *);
 static ssize_t sysfs_storf(struct kobject *, struct kobj_attribute *, const char *, size_t);
 static ssize_t sysfs_storw(struct kobject *, struct kobj_attribute *, const char *, size_t);
+static ssize_t sysfs_storb(struct kobject *, struct kobj_attribute *, const char *, size_t);
 static ssize_t sysfs_store(struct kobject *, struct kobj_attribute *, const char *, size_t, size_t);
 static ssize_t sysfs_ronly(struct kobject *, struct kobj_attribute *, const char *, size_t);
 
@@ -129,7 +130,6 @@ struct wp360_pmuc_device {
 #define MSG_SWITCHING_VOLTAGE      0x24   // tensione su ingresso switching attuale
 #define MSG_PMUC_TEMPERATURE       0x26   // temperatura pmuc
 #define MSG_FAN_VOLTAGE            0x28   // tensione ventole (20-90% -> 2.65-5V)
-#define MSG_WATCHDOG_ENABLE        0x2C   // abilitazione sul PMUC del watchdog CPU
-#define MSG_WATCHDOG_TRIGGER       0x2E   // scadenza del watchdog CPU
+#define MSG_WATCHDOG               0x2E   // abilitazione sul PMUC del watchdog CPU
 
 #define READ_MSG_WORD(msg) (((msg->payload[0] << 8) + msg->payload[1]) & MSG_WORD_MASK)

@@ -70,8 +70,7 @@ static struct wp360_pmuc_sysfs_attribute attributes[] = {
 	{MSG_SWITCHING_VOLTAGE,     0,      0,  1, __ATTR(switching_voltage,     0444, sysfs_query, sysfs_ronly) },
 	{MSG_PMUC_TEMPERATURE,      0,      0,  1, __ATTR(pmuc_temperature,      0444, sysfs_query, sysfs_ronly) },
 	{MSG_FAN_VOLTAGE,           20,    90,  0, __ATTR(fan_voltage,           0644, sysfs_show,  sysfs_storb) },
-	{MSG_WATCHDOG_ENABLE,       0, 0xFFFE,  0, __ATTR(watchdog_enable,       0644, sysfs_show,  sysfs_storw) },
-	{MSG_WATCHDOG_TRIGGER,      0,      0,  1, __ATTR(watchdog_trigger,      0444, sysfs_query, sysfs_ronly), .querying = ATOMIC_INIT(1)},
+	{MSG_WATCHDOG,              0, 0xFFFE,  0, __ATTR(watchdog,              0644, sysfs_show,  sysfs_storw) },
 };
 
 static struct attribute *wp360_pmuc_attrs[N_ATTRIBUTES + 1];
@@ -437,8 +436,7 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 		case (MSG_SWITCHING_TIMEOUT):
 		case (MSG_PMUC_TEMPERATURE):
 		case (MSG_FAN_VOLTAGE):
-		case (MSG_WATCHDOG_ENABLE):
-		case (MSG_WATCHDOG_TRIGGER):
+		case (MSG_WATCHDOG):
 			struct wp360_pmuc_sysfs_attribute *data;
 			for (int i = 0; i < N_ATTRIBUTES; i++)
 			{
