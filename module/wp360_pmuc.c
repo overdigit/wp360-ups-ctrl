@@ -71,6 +71,7 @@ static struct wp360_pmuc_sysfs_attribute attributes[] = {
 	{MSG_PMUC_TEMPERATURE,      0,      0,  1, __ATTR(pmuc_temperature,      0444, sysfs_query, sysfs_ronly) },
 	{MSG_FAN_VOLTAGE,           20,    90,  0, __ATTR(fan_voltage,           0644, sysfs_show,  sysfs_storb) },
 	{MSG_WATCHDOG,              0, 0xFFFE,  0, __ATTR(watchdog,              0644, sysfs_show,  sysfs_storw) },
+	{MSG_FIRMWARE_RELEASE,      0,      0,  0, __ATTR(firmware_release,      0444, sysfs_showd, sysfs_ronly) },
 };
 
 static struct attribute *wp360_pmuc_attrs[N_ATTRIBUTES + 1];
@@ -90,6 +91,14 @@ static ssize_t sysfs_show(struct kobject *kobj, struct kobj_attribute *attr, cha
 {
 	const struct wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
 	return sysfs_emit(buf, "%hd\n", data->value);
+}
+static ssize_t sysfs_showd(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	const struct wp360_pmuc_sysfs_attribute *data = container_of(attr, struct wp360_pmuc_sysfs_attribute, attribute);
+	int day   =  data->value & 0x1F;
+	int month = (data->value >> 5) & 0xF;
+	int year  = (data->value >> 9);
+	return sysfs_emit(buf, "%02d-%02d-%02d\n", year, month, day);
 }
 
 static ssize_t sysfs_query(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -437,6 +446,7 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 		case (MSG_PMUC_TEMPERATURE):
 		case (MSG_FAN_VOLTAGE):
 		case (MSG_WATCHDOG):
+		case (MSG_FIRMWARE_RELEASE):
 			struct wp360_pmuc_sysfs_attribute *data;
 			for (int i = 0; i < N_ATTRIBUTES; i++)
 			{

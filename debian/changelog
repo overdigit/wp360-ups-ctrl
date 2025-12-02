@@ -1,3 +1,9 @@
+wp360-pmuc (2.3.0-1) trixie; urgency=low
+
+  * Add firmware release attribute.
+
+ -- Overdigit <info@overdigit.com>  Tue, 02 Dec 2025 18:06:28 +0100
+
 wp360-pmuc (2.2.0-1) trixie; urgency=low
 
   * Simplify watchdog control.
