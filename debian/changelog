@@ -1,3 +1,9 @@
+wp360-pmuc (2.3.1-1) trixie; urgency=medium
+
+  * Prevent querying attribute deadlock.
+
+ -- Overdigit <info@overdigit.com>  Wed, 17 Dec 2025 17:39:45 +0100
+
 wp360-pmuc (2.3.0-1) trixie; urgency=low
 
   * Add firmware release attribute.

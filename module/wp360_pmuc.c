@@ -134,16 +134,22 @@ static ssize_t sysfs_query(struct kobject *kobj, struct kobj_attribute *attr, ch
 	}
 
 	pr_info("[sysfs] Waiting for 0x%02X\n", data->cmd);
-	ret = wait_event_interruptible(data->waitq, (pr_info("[sysfs] Waking up?\n"), data->value != 0xFFFF));
+	ret = wait_event_interruptible_timeout(data->waitq, (pr_info("[sysfs] Waking up?\n"), data->value != 0xFFFF), 300);
 	pr_info("[sysfs] Woke up\n");
 	if (querying)
 	{
 		atomic_set(&data->querying, 0);
 	}
-	if (ret)
+	if (ret < 0)
 	{
 		pr_info("[sysfs] Interrupted\n");
 		return -EINTR;
+	}
+	if (ret == 0)
+	{
+		pr_info("[sysfs] Timeout in query, gonna do a bad thing\n");
+		atomic_set(&data->querying, 0);
+		return -EAGAIN;
 	}
 	return sysfs_emit(buf, "%hd\n", data->value);
 }
