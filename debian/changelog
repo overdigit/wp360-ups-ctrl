@@ -1,3 +1,9 @@
+wp360-pmuc (2.3.2-1) trixie; urgency=low
+
+  * Remove debug log messages.
+
+ -- Overdigit <info@overdigit.com>  Wed, 13 May 2026 11:31:07 +0200
+
 wp360-pmuc (2.3.1-1) trixie; urgency=medium
 
   * Prevent querying attribute deadlock.

@@ -133,21 +133,21 @@ static ssize_t sysfs_query(struct kobject *kobj, struct kobj_attribute *attr, ch
 		wake_up(&write_buffer.waitq);
 	}
 
-	pr_info("[sysfs] Waiting for 0x%02X\n", data->cmd);
-	ret = wait_event_interruptible_timeout(data->waitq, (pr_info("[sysfs] Waking up?\n"), data->value != 0xFFFF), 300);
-	pr_info("[sysfs] Woke up\n");
+	//pr_info("[sysfs] Waiting for 0x%02X\n", data->cmd);
+	ret = wait_event_interruptible_timeout(data->waitq, (/*pr_info("[sysfs] Waking up?\n"),*/ data->value != 0xFFFF), 300);
+	//pr_info("[sysfs] Woke up\n");
 	if (querying)
 	{
 		atomic_set(&data->querying, 0);
 	}
 	if (ret < 0)
 	{
-		pr_info("[sysfs] Interrupted\n");
+		//pr_info("[sysfs] Interrupted\n");
 		return -EINTR;
 	}
 	if (ret == 0)
 	{
-		pr_info("[sysfs] Timeout in query, gonna do a bad thing\n");
+		//pr_info("[sysfs] Timeout in query, gonna do a bad thing\n");
 		atomic_set(&data->querying, 0);
 		return -EAGAIN;
 	}
@@ -267,27 +267,27 @@ static int wp360_pmuc_write_thread(void *arg)
 				switch(msg.size)
 				{
 				case (1):
-					pr_info("[w] Sending 0x%02X\n", msg.payload[0]);
+					//pr_info("[w] Sending 0x%02X\n", msg.payload[0]);
 					delay = SYNC_BYTE;
 					break;
 				case (2):
-					pr_info("[w] Sending 0x%02X%02X\n", msg.payload[0], msg.payload[1]);
+					//pr_info("[w] Sending 0x%02X%02X\n", msg.payload[0], msg.payload[1]);
 					delay = SYNC_WORD;
 					break;
 				case (3):
-					pr_info("[w] Sending 0x%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2]);
+					//pr_info("[w] Sending 0x%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2]);
 					delay = SYNC_HWORD;
 					break;
 				case (4):
-					pr_info("[w] Sending 0x%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3]);
+					//pr_info("[w] Sending 0x%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3]);
 					delay = SYNC_DWORD;
 					break;
 				case (5):
-					pr_info("[w] Sending 0x%02X%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3], msg.payload[4]);
+					//pr_info("[w] Sending 0x%02X%02X%02X%02X%02X\n", msg.payload[0], msg.payload[1], msg.payload[2], msg.payload[3], msg.payload[4]);
 					delay = SYNC_PWORD;
 					break;
 				default:
-					pr_info("[w] Wrong message size in buffer, ignoring\n");
+					//pr_info("[w] Wrong message size in buffer, ignoring\n");
 					break;
 				}
 				if (delay)
@@ -318,7 +318,7 @@ static int wp360_pmuc_write_thread(void *arg)
 		ret = wait_event_interruptible(write_buffer.waitq, !atomic_read(&write_buffer.write_lock) && (write_buffer.push_head != write_buffer.pop_head));
 		if (ret == -ERESTARTSYS)
 		{ // Received signal, terminate
-			pr_info("Received signal, exiting\n");
+			//pr_info("Received signal, exiting\n");
 			return -EINTR;
 		}
 	}
@@ -413,11 +413,11 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 			value = msg->payload[0] & MSG_FLAG_MASK;
 			break;
 		case (2):
-			pr_info("0x%02X%02X\n", msg->payload[0], msg->payload[1]);
+			//pr_info("0x%02X%02X\n", msg->payload[0], msg->payload[1]);
 			value = READ_MSG_WORD(msg);
 			break;
 		case (3):
-			pr_info("0x%02X%02X%02X\n", msg->payload[0], msg->payload[1], msg->payload[2]);
+			//pr_info("0x%02X%02X%02X\n", msg->payload[0], msg->payload[1], msg->payload[2]);
 			value = (msg->payload[1] << 8) | msg->payload[2];
 			break;
 		case (4):
@@ -427,7 +427,7 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 			value = (msg->payload[1] << 24) | (msg->payload[2] << 16) | (msg->payload[3] << 8) | msg->payload[4];
 			break;
 		}
-		pr_info("Received 0x%02X[%d] %llX\n", cmd, msg->size, value);
+		//pr_info("Received 0x%02X[%d] %llX\n", cmd, msg->size, value);
 		switch (cmd)
 		{
 		case (MSG_SYS_POWEROFF):
@@ -476,7 +476,7 @@ static irqreturn_t wp360_pmuc_interrupt_thread(int irq, void *dev_id)
 
 static int devicemodel_probe(struct platform_device *dev)
 {
-	pr_info("devicemodel probe\n");
+	//pr_info("devicemodel probe\n");
 	gpio_send = gpiod_get_index(&dev->dev, "comm", 0, GPIOD_OUT_LOW);
 	if (IS_ERR(gpio_send))
 	{
@@ -600,7 +600,8 @@ static int __init wp360_pmuc_driver_init(void)
 		pr_err("Could not create thread\n");
 		return -1;
 	}
-	pr_info("Woken up? %d\n", wake_up_process(wp360_pmuc_write_task));
+	// pr_info("Woken up? %d\n", wake_up_process(wp360_pmuc_write_task));
+	wake_up_process(wp360_pmuc_write_task);
 
 	pr_info("Driver loaded\n");
 	return 0;
@@ -654,17 +655,17 @@ static ssize_t device_read(struct file *filp, char __user *buffer, size_t length
 	// TODO: if non-blocking, return -EAGAIN instead of waiting
 	struct wp360_pmuc_device_read_head *rh    = filp->private_data;
 	struct wp360_pmuc_message           *msg;
-	pr_info("[read] offset = %p\n", offset);
+	//pr_info("[read] offset = %p\n", offset);
 
 	if (rh->pop_head == read_buffer.push_head)
 	{
-		if (wait_event_interruptible(*rh->waitq, (pr_info("[read] Woken up?\n"), rh->pop_head != read_buffer.push_head)))
+		if (wait_event_interruptible(*rh->waitq, (/*pr_info("[read] Woken up?\n"),*/ rh->pop_head != read_buffer.push_head)))
 		{
 			return -EINTR;
 		}
 	}
 
-	pr_info("[read] Woken up\n");
+	//pr_info("[read] Woken up\n");
 	msg = read_buffer.buffer + rh->pop_head;
 	if (copy_to_user(buffer, msg->payload, msg->size))
 	{
@@ -673,7 +674,7 @@ static ssize_t device_read(struct file *filp, char __user *buffer, size_t length
 	}
 
 	rh->pop_head = (rh->pop_head + 1) & (read_buffer.size - 1);
-	pr_info("[read] Returned %u bytes\n", msg->size);
+	//pr_info("[read] Returned %u bytes\n", msg->size);
 
 	return msg->size;
 }
@@ -682,7 +683,7 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 {
 	if (*off)
 	{
-		pr_info("Invalid offset - this should not be possible\n");
+		//pr_info("Invalid offset - this should not be possible\n");
 		return -EINVAL; // TODO: proper error value invalid seek I think?
 	}
 	
@@ -695,14 +696,14 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 		case (5):
 			break;
 		default:
-			pr_info("Invalid number of bytes: %lu\n", len);
+			//pr_info("Invalid number of bytes: %lu\n", len);
 			return -EINVAL;
 			break;
 	}
 
 	if (!access_ok(buff, len))
 	{
-		pr_info("Couldn't access user buffer\n");
+		//pr_info("Couldn't access user buffer\n");
 		return -EINVAL;
 	}
 
@@ -725,7 +726,7 @@ static ssize_t device_write(struct file *filp, const char __user *buff, size_t l
 
 	if (++write_buffer.push_head == write_buffer.size)
 	{
-		pr_info("Buffer wraparound\n");
+		//pr_info("Buffer wraparound\n");
 		write_buffer.push_head = 0;
 	}
 
