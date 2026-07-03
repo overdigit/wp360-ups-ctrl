@@ -70,7 +70,7 @@ static struct wp360_pmuc_sysfs_attribute attributes[] = {
 	{MSG_SWITCHING_VOLTAGE,     0,      0,  1, __ATTR(switching_voltage,     0444, sysfs_query, sysfs_ronly) },
 	{MSG_PMUC_TEMPERATURE,      0,      0,  1, __ATTR(pmuc_temperature,      0444, sysfs_query, sysfs_ronly) },
 	{MSG_FAN_VOLTAGE,           20,    90,  0, __ATTR(fan_voltage,           0644, sysfs_show,  sysfs_storb) },
-	{MSG_WATCHDOG,              0, 0xFFFE,  0, __ATTR(watchdog,              0644, sysfs_show,  sysfs_storw) },
+	{MSG_WATCHDOG,              0, 0xFFFF,  0, __ATTR(watchdog,              0644, sysfs_show,  sysfs_storw) },
 	{MSG_FIRMWARE_RELEASE,      0,      0,  0, __ATTR(firmware_release,      0444, sysfs_showd, sysfs_ronly) },
 };
 
