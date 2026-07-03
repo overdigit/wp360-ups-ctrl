@@ -1,3 +1,9 @@
+wp360-pmuc (2.3.3-1) trixie; urgency=low
+
+  * Allow disabling watchdog.
+
+ -- Overdigit <info@overdigit.com>  Fri, 03 Jul 2026 12:20:25 +0200
+
 wp360-pmuc (2.3.2-1) trixie; urgency=low
 
   * Remove debug log messages.
