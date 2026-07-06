@@ -15,6 +15,7 @@ install:
 	install -d $(DESTDIR)$(prefix)/share/initramfs-tools/scripts/init-bottom
 	install -d $(DESTDIR)$(prefix)/src/wp360_pmuc-5/
 	install -d $(DESTDIR)$(prefix)/share/wp360-pmuc/
+	install -d $(DESTDIR)$(prefix)/lib/modules-load.d/
 	install wp360-pmuc-poweroff $(DESTDIR)$(prefix)/lib/systemd/system-shutdown
 	install wp360-codesys.d-gpio24.conf $(DESTDIR)$(prefix)/lib/systemd/system/codesyscontrol.service.d/20-wp360-pmuc.conf
 	install wp360-pmuc-hook $(DESTDIR)$(prefix)/share/initramfs-tools/hooks
@@ -24,5 +25,6 @@ install:
 	install module/Makefile $(DESTDIR)$(prefix)/src/wp360_pmuc-5/
 	install wp360-pmuc-cm4.dtbo $(DESTDIR)$(prefix)/share/wp360-pmuc/
 	install wp360-pmuc-cm5.dtbo $(DESTDIR)$(prefix)/share/wp360-pmuc/
+	install wp360-pmuc.conf $(DESTDIR)$(prefix)/lib/modules-load.d/
 
 .PHONY: all install
