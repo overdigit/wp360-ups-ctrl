@@ -1,3 +1,9 @@
+wp360-pmuc (2.3.5-1) trixie; urgency=medium
+
+  * Run systemctl ExecStartPre/Post as root. Necessary since CODESYS Control 4.21.
+
+ -- Overdigit <info@overdigit.com>  Mon, 13 Jul 2026 16:24:43 +0200
+
 wp360-pmuc (2.3.4-1) trixie; urgency=low
 
   * Force module loading on boot.
